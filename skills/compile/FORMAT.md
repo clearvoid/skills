@@ -34,6 +34,7 @@ framing: |
   How tweet/X content gets extracted and processed. Track the pipeline shape,
   where bugs cluster, and decisions about structured metadata.
 framing_source: ai_seeded        # ai_seeded | human — human means promoted/edited
+summary: One line distilling the current view — feeds the generated index and the context skill's selection.
 created: 2026-06-10
 updated: 2026-06-10
 sources:
@@ -97,6 +98,22 @@ Rules:
   source id or glob per line), or simply don't commit the brief/hunk it produced.
 - Concurrent compiles produce ordinary markdown merge conflicts; per-topic files keep the
   surface small. A reconcile instruction is a later addition, not v0.
+
+## Cross-project roots — `~/.clearvoid/roots.json`
+
+A registry of every place briefs live, shared by all clients (skills, the desktop workbench):
+
+```json
+{
+  "version": 1,
+  "personalRoot": "~/clearvoid/briefs",
+  "roots": ["/Users/x/code/some-repo/briefs"]
+}
+```
+
+- `buildIndex.mjs` (run at the end of every compile) auto-registers the repo's `briefs/`; the personal root holds briefs tied to no repo.
+- Read-side tools (the `context` skill, the workbench) aggregate across the current repo + the registry. Compile only ever writes to the root it was pointed at.
+- `CLEARVOID_HOME_DIR` overrides `$HOME` for the registry too (hermetic tests).
 
 ## What we deliberately lose vs the desktop SQLite path
 

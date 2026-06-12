@@ -12,6 +12,7 @@ import {
 	claudeProjectsDir,
 	cleanContentForTitle,
 	encodeProjectPath,
+	findRepoRoots,
 	nonEmptyLines,
 	parseSessionLines,
 } from "./lib.mjs";
@@ -19,23 +20,6 @@ import {
 function arg(name, fallback) {
 	const i = process.argv.indexOf(name);
 	return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
-}
-
-// Nearest ancestor containing .git (dir in a checkout, file in a worktree).
-// Returns both roots: `checkoutRoot` is where briefs/ lives (the checkout you're
-// standing in — a worktree writes briefs onto its OWN branch), while `matchRoot`
-// collapses <root>/.claude/worktrees/<name> back to <root> so session matching
-// covers the whole repo family.
-function findRoots(start) {
-	let dir = resolve(start);
-	for (;;) {
-		if (existsSync(join(dir, ".git"))) break;
-		const parent = dirname(dir);
-		if (parent === dir) return null;
-		dir = parent;
-	}
-	const m = dir.match(/^(.*?)\/\.claude\/worktrees\/[^/]+$/);
-	return { checkoutRoot: dir, matchRoot: m ? m[1] : dir };
 }
 
 function loadState(briefsDir) {
@@ -66,7 +50,7 @@ function loadIgnoreGlobs(briefsDir) {
 }
 
 const cwd = arg("--cwd", process.cwd());
-const roots = findRoots(cwd);
+const roots = findRepoRoots(cwd);
 if (!roots) {
 	console.error("listSessions: not inside a git repository");
 	process.exit(1);

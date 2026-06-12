@@ -86,9 +86,11 @@ The conversation stays live during a run — treat mid-run steering ("skip that 
 
 6. **Write briefs** (per FORMAT.md):
    - **Update**: integrate new material into the body — reconcile, supersede, don't
-     append-only. Add the session's id to `sources:`, bump `updated:`.
-   - **Create**: kebab-case slug, seeded framing (`framing_source: ai_seeded`), compiled
-     body. New briefs need a reason to exist — a thread that recurs or clearly will. On a
+     append-only. Add the session's id to `sources:`, bump `updated:`, and refresh
+     `summary:` (one line, the current view distilled — the index and the context skill
+     select by it) whenever the position moved.
+   - **Create**: kebab-case slug, seeded framing (`framing_source: ai_seeded`),
+     `summary:` one-liner, compiled body. New briefs need a reason to exist — a thread that recurs or clearly will. On a
      cold start, prefer fewer, denser briefs: one per genuinely distinct thread, never one
      per session.
    - **Framing discipline (the load-bearing rule):** a framing with
@@ -104,8 +106,11 @@ The conversation stays live during a run — treat mid-run steering ("skip that 
    the queue entry — the session may have grown between listing and rendering, and lines
    you didn't read must not be marked compiled.
 
-8. **Regenerate the index.** Rewrite `briefs/README.md`: one line per brief — `[title](slug.md)` +
-   the framing's first sentence. It's the folder's landing page on GitHub.
+8. **Regenerate the index.** Run
+   `node ${CLAUDE_SKILL_DIR}/scripts/buildIndex.mjs --briefs-dir <briefsDir>` —
+   deterministic: rebuilds `briefs/README.md` from frontmatter (title, summary, updated)
+   and registers the root in `~/.clearvoid/roots.json` so the context skill can find it.
+   Never hand-write the index.
 
 9. **Report.** Sessions compiled, briefs created/updated (with one-line whats), threads
    you noticed but didn't promote, and a reminder that briefs are theirs to edit — fixing

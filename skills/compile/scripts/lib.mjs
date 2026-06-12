@@ -4,8 +4,14 @@
 // NOTE: keep semantics in lockstep with the originals; re-derive the chrome tag list
 // empirically when output looks dirty (scan user turns for leading `<tag>`).
 
+import {
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 // FRAGILE: mirrors what Claude Code emits; grows across CC versions.
 const BLOCK_CHROME_TAGS = [
@@ -232,4 +238,55 @@ export function encodeProjectPath(p) {
 export function claudeProjectsDir() {
 	const home = process.env.CLEARVOID_HOME_DIR ?? homedir();
 	return join(home, ".claude", "projects");
+}
+
+/**
+ * Nearest ancestor containing .git (dir in a checkout, file in a worktree).
+ * `checkoutRoot` is where briefs/ lives (a worktree writes briefs onto its OWN
+ * branch); `matchRoot` collapses <root>/.claude/worktrees/<name> back to <root>
+ * so session matching covers the whole repo family.
+ */
+export function findRepoRoots(start) {
+	let dir = resolve(start);
+	for (;;) {
+		if (existsSync(join(dir, ".git"))) break;
+		const parent = dirname(dir);
+		if (parent === dir) return null;
+		dir = parent;
+	}
+	const m = dir.match(/^(.*?)\/\.claude\/worktrees\/[^/]+$/);
+	return { checkoutRoot: dir, matchRoot: m ? m[1] : dir };
+}
+
+// ── Cross-project roots registry: ~/.clearvoid/roots.json ──────────────────
+// Shared by every client (compile, context, the desktop workbench). Read-side
+// tools aggregate across it; compile only writes where it was pointed.
+
+export function rootsPath() {
+	const home = process.env.CLEARVOID_HOME_DIR ?? homedir();
+	return join(home, ".clearvoid", "roots.json");
+}
+
+export function loadRoots() {
+	const home = process.env.CLEARVOID_HOME_DIR ?? homedir();
+	try {
+		const r = JSON.parse(readFileSync(rootsPath(), "utf8"));
+		if (!Array.isArray(r.roots)) r.roots = [];
+		if (!r.personalRoot) r.personalRoot = join(home, "clearvoid", "briefs");
+		return r;
+	} catch {
+		return { version: 1, personalRoot: join(home, "clearvoid", "briefs"), roots: [] };
+	}
+}
+
+/** Idempotently add a briefs dir to the registry. Returns true if it was new. */
+export function registerRoot(briefsDir) {
+	const roots = loadRoots();
+	const abs = resolve(briefsDir);
+	if (roots.roots.includes(abs) || abs === resolve(roots.personalRoot)) return false;
+	roots.roots.push(abs);
+	roots.roots.sort();
+	mkdirSync(dirname(rootsPath()), { recursive: true });
+	writeFileSync(rootsPath(), `${JSON.stringify(roots, null, 2)}\n`);
+	return true;
 }
