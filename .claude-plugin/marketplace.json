@@ -1,0 +1,14 @@
+{
+	"name": "clearvoid",
+	"description": "Clearvoid skills — compile your Claude Code sessions into living markdown briefs.",
+	"owner": { "name": "Alex Peretti" },
+	"plugins": [
+		{
+			"name": "clearvoid",
+			"source": "./",
+			"description": "Compile your Claude Code sessions into living markdown briefs — in your repo, in files you own.",
+			"version": "0.1.0",
+			"category": "productivity"
+		}
+	]
+}
