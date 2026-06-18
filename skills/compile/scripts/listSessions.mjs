@@ -13,6 +13,7 @@ import {
 	cleanContentForTitle,
 	encodeProjectPath,
 	findRepoRoots,
+	resolveCollection,
 	nonEmptyLines,
 	parseSessionLines,
 } from "./lib.mjs";
@@ -56,8 +57,16 @@ if (!roots) {
 	process.exit(1);
 }
 const { checkoutRoot, matchRoot } = roots;
-const briefsDir = join(checkoutRoot, "briefs");
+// briefsRoot is the repo's briefs/ (what registerRoot records); a `to:<path>`
+// directive narrows the write dir to a collection subfolder. No `to:` → they're equal.
+const briefsRoot = join(checkoutRoot, "briefs");
+const briefsDir = resolveCollection(briefsRoot, arg("--to"));
 const encodedRoot = encodeProjectPath(matchRoot);
+// On macOS, /private/var is the realpath for the /var symlink. Claude Code may encode
+// the session using either form depending on how it resolved the cwd at creation time.
+const altEncodedRoot = matchRoot.startsWith("/private/")
+	? encodeProjectPath(matchRoot.slice("/private".length))
+	: null;
 const projectsDir = claudeProjectsDir();
 
 const state = loadState(briefsDir);
@@ -68,7 +77,11 @@ const ignoredMatch = (fullId, bareId) =>
 let dirs = [];
 try {
 	dirs = readdirSync(projectsDir).filter(
-		(d) => d === encodedRoot || d.startsWith(`${encodedRoot}-`),
+		(d) =>
+			d === encodedRoot ||
+			d.startsWith(`${encodedRoot}-`) ||
+			(altEncodedRoot &&
+				(d === altEncodedRoot || d.startsWith(`${altEncodedRoot}-`))),
 	);
 } catch {
 	console.error(`listSessions: cannot read ${projectsDir}`);
@@ -180,6 +193,7 @@ console.log(
 			repoRoot: matchRoot,
 			checkoutRoot,
 			encodedRoot,
+			briefsRoot,
 			briefsDir,
 			generatedAt: new Date(now).toISOString(),
 			queue,

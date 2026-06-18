@@ -32,20 +32,15 @@ sessions it came from).
 
 The full file contract lives in [skills/compile/FORMAT.md](skills/compile/FORMAT.md).
 
-## The index: `briefs/README.md`
+## Selecting briefs (no generated index)
 
-Every compile regenerates `briefs/README.md` deterministically — one line per brief (title, one-line summary, last updated). It does two jobs:
-
-1. **The human navigator.** GitHub renders it as the folder's landing page, and it resolves the one thing GitHub can't: cross-brief navigation (wikilinks don't link there). Someone browsing your repo reads the index and knows what the project thinks in ten seconds.
-2. **The machine selection surface.** The read-side `context` skill works by progressive disclosure: it reads the index, picks the briefs relevant to the conversation, and loads only those — the index is its table of contents, which is why it carries summaries and not just titles.
-
-It's regenerated on every compile — treat it as generated output, not a file you edit (your edits belong in the briefs themselves, especially framings).
+There's no generated index file — the brief files are the only artifact compile writes. When the read-side `context` skill pulls briefs into a conversation it works by progressive disclosure: it scans each brief's frontmatter (title, one-line summary, last updated) on demand, picks the briefs relevant to the conversation, and loads only those. The `summary:` line carries that selection, which is why every brief has one. The scan reads the files directly, so the selection surface is always current — nothing to regenerate, nothing to fall out of date.
 
 ## Briefs across projects
 
 Repo briefs live with their repo. For everything else — research tied to no project — there's a **personal root** (default `~/clearvoid/briefs`), and a registry at **`~/.clearvoid/roots.json`** listing every place briefs live: the compile skill auto-registers a repo's `briefs/` on first compile, so the registry builds itself. The `context` skill resolves the repo you're in plus the registry's other roots — ask a question in any project and your cross-project briefs are reachable. The desktop workbench reads the same file: one multi-root contract for every client. Reading aggregates across roots; compiling never writes outside the root you point it at.
 
-Loading briefs back into a conversation is the `context` skill: `/clearvoid:context [topic]` resolves your roots, reads the indexes, and loads only the relevant briefs.
+Loading briefs back into a conversation is the `context` skill: `/clearvoid:context [topic]` resolves your roots, scans your briefs' frontmatter, and loads only the relevant ones.
 
 ## Local by construction
 

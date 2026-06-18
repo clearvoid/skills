@@ -1,8 +1,8 @@
 ---
 name: compile
-description: Compile this repo's Claude Code sessions into living markdown briefs in ./briefs/ — incremental, provenance-linked, each brief a framing plus a compiled current view. Use when the user asks to compile briefs, update the briefs, compile this session, or asks what this repo's session history adds up to.
+description: Compile a corpus into living markdown briefs in ./briefs/ — by default this repo's Claude Code sessions, or a markdown file/folder (md:<path>), or any URL including YouTube (url:<url>). Incremental, provenance-linked, each brief a framing plus a compiled current view. Use when the user asks to compile briefs, update the briefs, compile this session, fold a markdown file/notes into briefs, compile a YouTube video or other URL, or asks what this repo's session history adds up to.
 user-invocable: true
-argument-hint: "[source and/or emphasis, e.g. 'pay special attention to the agency-strategy discussion in this session']"
+argument-hint: "[optional md:<path> source prefix, then emphasis, e.g. 'pay special attention to the agency-strategy discussion']"
 allowed-tools: Read, Write, Edit, Glob, Bash(node *)
 ---
 
@@ -18,22 +18,47 @@ whenever unsure about frontmatter, the state file, or folder conventions.
 
 ## Sources
 
-The default source is **Claude Code sessions belonging to this repo**. Read
-`${CLAUDE_SKILL_DIR}/sources/claude-code.md` before the first compile — it documents the
-scripts, the session encoding, and the JSONL quirks. (Other sources — ChatGPT exports,
-plain markdown folders — will be sibling modules under `sources/`; if the user names one
-that doesn't exist yet, say so.)
+Compile is `source × destination`: a **source** enumerates and renders the material, a
+**destination** is where briefs land. The contract every source satisfies (the shared queue
+shape, the unit/watermark concepts, repo-bound vs free) is in
+`${CLAUDE_SKILL_DIR}/sources/README.md` — read it once. The source modules today:
+
+- **`claude-code`** (default) — Claude Code sessions belonging to this repo. Read
+  `${CLAUDE_SKILL_DIR}/sources/claude-code.md` before the first compile (scripts, session
+  encoding, JSONL quirks). Repo-bound: needs a git repo.
+- **`md`** — a plain markdown file, directory, or glob, selected with the `md:` prefix
+  (`md:/tmp/echo.md`). Read `${CLAUDE_SKILL_DIR}/sources/markdown.md` before the first
+  markdown compile. Free: writes `briefs/` wherever you run (or `--briefs-dir`).
+- **`url`** — any URL (a YouTube video, article, or tweet), selected with the `url:` prefix
+  (`url:https://www.youtube.com/watch?v=…`), several space-separated URLs, or a channel
+  (`url:channel:UC…`). Content is fetched from the hosted Clearvoid extract endpoint and
+  cached under the repo's `raw/`. Read `${CLAUDE_SKILL_DIR}/sources/url.md` before the first
+  url compile. Free.
+
+**Source and destination selection are mechanical, never inferred from prose.** Scan only
+the directive's leading whitespace-delimited tokens:
+
+- **Source:** if the first token matches `<source>:` for a module above (`md:`, `url:`), it
+  selects the source and the rest of that token is its argument (the path/glob/URL, or for
+  `url:` several space-separated URLs). Otherwise the source is `claude-code`.
+- **Destination:** a `to:<path>` token (a leading token, in any order with the source token)
+  selects the destination **collection**: briefs land in `briefs/<path>/` (any depth). No
+  `to:` writes to `briefs/` top-level. Pass it through to the list and `render` scripts as
+  `--to <path>`.
+- Everything after the consumed selector tokens is **emphasis** (it steers attention only).
+
+A prefix naming a source with no module yet (`chatgpt:`) gets "that doesn't exist yet",
+never reinterpreted. A bare path with no prefix is emphasis, not a source.
 
 ## Directive
 
-Anything typed after the skill name is a free-text directive. It can do two things: name
-a **source** ("compile my ChatGPT export" — resolved per Sources above; a source with no
-module yet gets "that doesn't exist yet", never reinterpreted as emphasis) and steer
-**attention**. What it never does is scope *which sessions* compile: a run always
+Anything typed after the skill name is a free-text directive. After the optional leading
+`<source>:` selector token is consumed (see Sources), the **rest is emphasis** — it steers
+**attention**, nothing else. What it never does is scope *which units* compile: a run always
 processes the full queue, oldest first — "everything since the last compile" is the
-whole contract. (Session scoping was considered and rejected: with an empty queue it's a
+whole contract. (Unit scoping was considered and rejected: with an empty queue it's a
 no-op, and with a stale queue it folds material out of chronological order, letting
-older sessions later overwrite newer positions.)
+older units later overwrite newer positions.)
 
 Emphasis steers what to attend to within that sweep — "pay special attention to the
 agency-strategy discussion", "especially this session" (the queue entry flagged
@@ -42,8 +67,9 @@ promoting it to its own brief. Two guardrails:
 
 - Emphasis never fabricates: if the material isn't actually in the sessions, report that
   rather than writing a thin brief to satisfy the directive.
-- Emphasis never overrides a `framing_source: human` framing — on conflict, obey the
-  framing and flag the tension in the report.
+- Emphasis never overwrites an existing framing. On conflict, obey the framing as written
+  and flag the tension in the report. Emphasis steers what the body attends to, never the
+  framing.
 
 If an emphasized thread does earn a new brief, seed its framing from the directive's own
 language: the one-off instruction becoming durable steering is the framing mechanism
@@ -54,63 +80,85 @@ The conversation stays live during a run — treat mid-run steering ("skip that 
 
 ## Process
 
-1. **Orient.** Read every existing `briefs/*.md` (frontmatter + body). These framings are
-   the lens for everything you read next. If `briefs/` doesn't exist, you're cold-starting:
-   you'll be proposing the first slate of briefs and seeding their framings yourself.
+1. **Orient.** Read every existing brief in the **write dir** (the target collection — the
+   list step's `briefsDir`, which is `briefs/` itself when there is no `to:`; a `to:`
+   collection scopes orientation to that subfolder, not the whole tree). These framings are
+   the lens for everything you read next. If the write dir doesn't exist yet, you're
+   cold-starting that collection: you'll be proposing its first slate of briefs and seeding
+   their framings yourself.
 
-2. **Get the queue.**
-   `node ${CLAUDE_SKILL_DIR}/scripts/listSessions.mjs`
-   Returns the repo's sessions with new content (`newLines > 0`), oldest first, with
-   titles/first-messages for triage. The entry flagged `current` is the session this
-   compile was invoked from — always compile it (running compile at the end of a session
-   is the core ritual; lines written after this run fold in next time). Skip *other*
-   entries flagged `activeRecently` (parallel sessions likely mid-flight) — they'll
-   compile next run.
+2. **Get the queue** from the resolved source's list script (append `--to <path>` when the
+   directive named a `to:` collection):
+   - claude-code: `node ${CLAUDE_SKILL_DIR}/scripts/listSessions.mjs [--to <path>]`
+   - md: `node ${CLAUDE_SKILL_DIR}/scripts/listMarkdown.mjs <selector> --cwd . [--to <path>]`
+   - url: `node ${CLAUDE_SKILL_DIR}/scripts/listUrl.mjs <url-or-channel…> --cwd . [--to <path>]`
+   They return the units with new content, oldest first, with titles for triage, and two
+   destination paths: **`briefsDir`** (the write dir — the collection where briefs and the
+   watermark live; use it for steps 1 and 5–7) and **`briefsRoot`** (the repo's `briefs/`;
+   use it for step 8's registration). The url source also returns `rawDir` (the raw-content
+   cache); pass it to `renderUrl`. **Surface any `errors`/`warnings` to the user** (bad
+   selectors, the "seeding a new unversioned briefs/" warning, the url channel-feed 15-video
+   cap). For claude-code: the entry flagged `current` is the session this compile was invoked
+   from — always compile it; skip *other* entries flagged `activeRecently` (parallel sessions
+   likely mid-flight). md/url have no `current`/`activeRecently` — compile the whole queue.
 
-3. **State the plan, don't block on it.** Report scope to the user — session count, date
-   span, and total substrate size from the queue's `newTokens` sum (NEVER from `bytes`:
-   raw JSONL overstates substrate 30–300×) — and the window plan. Proceed immediately; the
-   user can interrupt. Never wait for confirmation (non-interactive runs hang on questions).
+3. **State the plan, don't block on it.** Report scope to the user — unit count (sessions
+   or files), date span where applicable, and total substrate size from the queue's
+   `newTokens` sum (NEVER from `bytes`: raw substrate overstates 30–300×) — and the window
+   plan. Proceed immediately; the user can interrupt. Never wait for confirmation
+   (non-interactive runs hang on questions).
 
 4. **Pre-scan.** Read the queue's `title`/`firstMessage` fields across the whole backlog
    to form a rough map of recurring threads before walking any session.
 
-5. **Process in week-sized windows, oldest first.** Group queue entries by ISO week of
-   `startedAt`. For each window:
+5. **Process oldest first, in windows.** For claude-code, group queue entries by ISO week
+   of `startedAt`; for md (no chronology) take the queue's path order. For each window:
    - Re-read any briefs touched since the window started (your own writes accumulate).
-   - Entries with `newTokens: 0` (only chrome/meta in the new lines): skip rendering,
-     just record their watermark (step 7).
-   - For each session: `node ${CLAUDE_SKILL_DIR}/scripts/renderSession.mjs <id> --from-line <compiledLines>`
+   - Render each unit with the source's render script — **always pass `--briefs-dir
+     <briefsDir>`**, which records the unit's watermark as you read it (this is what makes
+     the watermark deterministic; step 7 commits it):
+     - claude-code: `node ${CLAUDE_SKILL_DIR}/scripts/renderSession.mjs <id> --from-line <compiledLines> --briefs-dir <briefsDir>`
+     - md: `node ${CLAUDE_SKILL_DIR}/scripts/renderMarkdown.mjs <id> --briefs-dir <briefsDir>` (whole-file, no offset)
+     - url: `node ${CLAUDE_SKILL_DIR}/scripts/renderUrl.mjs <id> --briefs-dir <briefsDir> --raw-dir <rawDir>` (fetches via the extract endpoint on a cache miss, then caches to `rawDir`)
+   - Entries with `newTokens: 0` (only chrome/meta in the new lines): still render them
+     (they produce no substrate but the render records their watermark, so they don't
+     re-queue). Don't write a brief for them.
    - Cluster as you read: does this material reinforce an existing brief's framing, or is
      it a genuinely new thread that deserves a new brief?
 
 6. **Write briefs** (per FORMAT.md):
    - **Update**: integrate new material into the body — reconcile, supersede, don't
-     append-only. Add the session's id to `sources:`, bump `updated:`, and refresh
-     `summary:` (one line, the current view distilled — the index and the context skill
-     select by it) whenever the position moved.
-   - **Create**: kebab-case slug, seeded framing (`framing_source: ai_seeded`),
-     `summary:` one-liner, compiled body. New briefs need a reason to exist — a thread that recurs or clearly will. On a
-     cold start, prefer fewer, denser briefs: one per genuinely distinct thread, never one
-     per session.
-   - **Framing discipline (the load-bearing rule):** a framing with
-     `framing_source: human` is an instruction to you — obey it, never edit it. You may
-     refine `ai_seeded` framings while the brief is young. Content lives under the
-     framing; the framing belongs to the human.
+     append-only. Add the unit's id (the session id or the `md:<path>`) to `sources:`,
+     bump `updated:`, and refresh `summary:` (one line, the current view distilled — the
+     context skill selects by it) whenever the position moved.
+   - **Create**: kebab-case slug, a seeded framing, `summary:` one-liner, compiled body.
+     Write the seeded framing with care: compile never revises a framing after creation,
+     so this first pass is the only one it gets. New briefs need a reason to exist, a
+     thread that recurs or clearly will. On a cold start, prefer fewer, denser briefs: one
+     per genuinely distinct thread, never one per session.
+   - **Framing discipline (the load-bearing rule):** compile seeds a framing once, on
+     create, and never rewrites a framing on a later run. An existing framing is an
+     instruction to you: obey it, never edit it; directives and emphasis may steer the body
+     but never overwrite the framing. On conflict, flag the tension in the report. Content
+     lives under the framing; the framing belongs to the human.
    - Cross-link related briefs with `[[slug]]` wikilinks.
 
-7. **Record progress.** After each session is folded in — per session, not batched at the
-   end, so a crashed or interrupted run resumes exactly where it stopped:
-   `node ${CLAUDE_SKILL_DIR}/scripts/updateState.mjs --briefs-dir <briefsDir> --session <id> --lines <lines> --touched <slugs>`
-   `--lines` is the upper bound from the renderSession header (`lines: A..B` → use B), NOT
-   the queue entry — the session may have grown between listing and rendering, and lines
-   you didn't read must not be marked compiled.
+7. **Finalize the watermark.** `node ${CLAUDE_SKILL_DIR}/scripts/finalizeState.mjs --briefs-dir <briefsDir>`
+   — one call, after every brief is written. Each render in step 5 already recorded its
+   unit's watermark (you passed `--briefs-dir`); this commits all of them into
+   `state.json` and clears the pending file. There is no per-unit bookkeeping to remember:
+   if you rendered a unit, it gets watermarked. A crash before this step commits nothing,
+   so the queue simply re-runs next time — bounded re-work, never un-watermarked sessions
+   that silently re-queue forever.
 
-8. **Regenerate the index.** Run
-   `node ${CLAUDE_SKILL_DIR}/scripts/buildIndex.mjs --briefs-dir <briefsDir>` —
-   deterministic: rebuilds `briefs/README.md` from frontmatter (title, summary, updated)
-   and registers the root in `~/.clearvoid/roots.json` so the context skill can find it.
-   Never hand-write the index.
+8. **Register the root.** Run
+   `node ${CLAUDE_SKILL_DIR}/scripts/registerRoot.mjs --briefs-dir <briefsRoot>` —
+   register the repo's `briefs/` **root** (`briefsRoot`), never the `to:` collection
+   subfolder: the read side recurses under the root and finds every collection, so one
+   registry entry per repo covers them all. Deterministic; adds it to
+   `~/.clearvoid/roots.json` so the context skill and the workbench can find it. No index is
+   built and no `README.md` is written: briefs are canonical and the read side scans their
+   frontmatter directly.
 
 9. **Report.** Sessions compiled, briefs created/updated (with one-line whats), threads
    you noticed but didn't promote, and a reminder that briefs are theirs to edit — fixing

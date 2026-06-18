@@ -23,8 +23,7 @@ All pure Node, no dependencies, run with `node`:
 | Script | Job |
 |---|---|
 | `listSessions.mjs [--cwd <path>]` | The queue: repo sessions vs the state watermark. JSON. |
-| `renderSession.mjs <id> [--from-line N]` | One session → clean markdown substrate. |
-| `updateState.mjs --briefs-dir <p> --session <id> --lines <N> [--touched a,b]` | Advance the watermark. |
+| `renderSession.mjs <id> [--from-line N] [--briefs-dir <p>]` | One session → clean markdown substrate; `--briefs-dir` records its watermark. |
 
 Session ids are source-namespaced: `claude-code:<encoded-dir>/<uuid>`. Use the full id
 everywhere (state, frontmatter `sources:` lists).
@@ -32,6 +31,10 @@ everywhere (state, frontmatter `sources:` lists).
 **Units are non-empty JSONL lines.** The watermark stores the absolute line count compiled
 through; `renderSession --from-line` resumes there. Sessions grow — a session can appear
 in the queue again with only its tail to read.
+
+**Recording it is automatic.** Rendering with `--briefs-dir` records the watermark (the
+line count read) as pending progress; `finalizeState.mjs` commits it once at the end of
+the run (see `sources/README.md`). There is no per-session call to remember.
 
 ## What the renderer gives you
 

@@ -4,14 +4,17 @@
 // NOTE: keep semantics in lockstep with the originals; re-derive the chrome tag list
 // empirically when output looks dirty (scan user turns for leading `<tag>`).
 
+import { createHash } from "node:crypto";
 import {
 	existsSync,
 	mkdirSync,
+	readdirSync,
 	readFileSync,
+	rmSync,
 	writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 
 // FRAGILE: mirrors what Claude Code emits; grows across CC versions.
 const BLOCK_CHROME_TAGS = [
@@ -258,6 +261,119 @@ export function findRepoRoots(start) {
 	return { checkoutRoot: dir, matchRoot: m ? m[1] : dir };
 }
 
+/**
+ * Where briefs get written — the destination axis, orthogonal to the source.
+ * Explicit `--briefs-dir` wins; otherwise `<cwd>/briefs`. No personalRoot, no git:
+ * a free source (md) writes `briefs/` wherever it is run; a repo-bound source
+ * (claude-code) resolves cwd → repo root before handing the root in here.
+ */
+export function resolveDestination(cwd, explicitBriefsDir) {
+	return resolve(explicitBriefsDir ?? join(cwd, "briefs"));
+}
+
+/**
+ * The write dir for a `to:<path>` collection — a subfolder (any depth) of the
+ * briefs root. Collections are the grouping axis: compile reads/writes/watermarks
+ * this dir (flat), while `registerRoot` records the *root* so the read side
+ * (context skill, desktop app) recurses and sees every collection. No `to:` →
+ * write dir IS the root (the default/top-level collection). Guards against `..`
+ * escaping the root.
+ */
+export function resolveCollection(briefsRoot, toPath) {
+	const root = resolve(briefsRoot);
+	if (!toPath) return root;
+	const sub = String(toPath).replace(/\\/g, "/").replace(/^\/+/, "");
+	const writeDir = resolve(root, sub);
+	if (writeDir !== root && !writeDir.startsWith(root + sep)) {
+		throw new Error(`to: path escapes the briefs root: ${toPath}`);
+	}
+	return writeDir;
+}
+
+/** Content-addressed watermark for hash-based sources (md): `sha256:<hex>`. */
+export function sha256(text) {
+	return `sha256:${createHash("sha256").update(text).digest("hex")}`;
+}
+
+// ── URL helpers (shared by listUrl + renderUrl) ─────────────────────────────
+// Both the `url` source's enumeration (listUrl) and its render+cache (renderUrl)
+// must derive the SAME video id and canonical URL — otherwise the watermark key
+// and the raw cache key (`youtube-<id>.md`) diverge. These live here so the two
+// scripts key identically.
+
+/**
+ * Pull a YouTube video id from any of its URL shapes (watch?v=, youtu.be/,
+ * /embed/, /shorts/) — null if it's not a YouTube video URL. Validates the
+ * 11-char id shape so a non-video YouTube page never produces a bogus key.
+ */
+export function youtubeVideoId(u) {
+	let parsed;
+	try {
+		parsed = new URL(u);
+	} catch {
+		return null;
+	}
+	const host = parsed.hostname.replace(/^www\./, "");
+	if (host === "youtu.be") {
+		const id = parsed.pathname.slice(1).split("/")[0];
+		return /^[\w-]{11}$/.test(id) ? id : null;
+	}
+	if (host === "youtube.com" || host === "m.youtube.com") {
+		const v = parsed.searchParams.get("v");
+		if (v && /^[\w-]{11}$/.test(v)) return v;
+		const m = parsed.pathname.match(/^\/(?:embed|shorts)\/([\w-]{11})/);
+		if (m) return m[1];
+	}
+	return null;
+}
+
+/** The canonical watch URL for a YouTube video id. */
+export function youtubeWatchUrl(id) {
+	return `https://www.youtube.com/watch?v=${id}`;
+}
+
+// Canonicalize a URL to a stable id key. YouTube videos collapse to the canonical
+// watch URL; everything else gets light normalization (lowercased host, no hash,
+// no trailing slash, no UTM/tracking params). Deliberately simple — the extract
+// endpoint canonicalizes server-side too; this just keeps the watermark stable.
+const TRACKING_PARAMS = /^(utm_|fbclid$|gclid$|mc_eid$|mc_cid$|ref$|ref_src$)/i;
+export function canonicalizeUrl(raw) {
+	const vid = youtubeVideoId(raw);
+	if (vid) return youtubeWatchUrl(vid);
+	const parsed = new URL(raw); // throws on garbage — caller catches
+	parsed.hostname = parsed.hostname.toLowerCase();
+	parsed.hash = "";
+	const keep = [];
+	for (const [k, v] of parsed.searchParams) {
+		if (!TRACKING_PARAMS.test(k)) keep.push([k, v]);
+	}
+	parsed.search = "";
+	for (const [k, v] of keep) parsed.searchParams.append(k, v);
+	let out = parsed.toString();
+	// Drop a lone trailing slash on the path (but keep "/" for a bare host).
+	out = out.replace(/\/(\?|$)/, "$1").replace(/^(https?:\/\/[^/]+)$/, "$1/");
+	return out;
+}
+
+// Recursive walk; skips dotfiles/dotdirs (.git, .clearvoid, etc.). `predicate`
+// decides which files to collect. Shared by listMarkdown (any .md) and the
+// context skill's resolveRoots (briefs: .md minus README.md).
+export function walk(dir, predicate, acc = []) {
+	let entries;
+	try {
+		entries = readdirSync(dir, { withFileTypes: true });
+	} catch {
+		return acc;
+	}
+	for (const e of entries) {
+		if (e.name.startsWith(".")) continue;
+		const full = join(dir, e.name);
+		if (e.isDirectory()) walk(full, predicate, acc);
+		else if (e.isFile() && predicate(full)) acc.push(full);
+	}
+	return acc;
+}
+
 // ── Cross-project roots registry: ~/.clearvoid/roots.json ──────────────────
 // Shared by every client (compile, context, the desktop workbench). Read-side
 // tools aggregate across it; compile only writes where it was pointed.
@@ -267,15 +383,17 @@ export function rootsPath() {
 	return join(home, ".clearvoid", "roots.json");
 }
 
+// Schema is flat: { version, roots: [...] }. There is no personalRoot — the
+// destination is always explicit (cwd or --briefs-dir), so a repo-less "personal"
+// home has no job. A legacy roots.json with a personalRoot key self-heals: we drop
+// it on the next write.
 export function loadRoots() {
-	const home = process.env.CLEARVOID_HOME_DIR ?? homedir();
 	try {
 		const r = JSON.parse(readFileSync(rootsPath(), "utf8"));
-		if (!Array.isArray(r.roots)) r.roots = [];
-		if (!r.personalRoot) r.personalRoot = join(home, "clearvoid", "briefs");
-		return r;
+		const roots = Array.isArray(r.roots) ? r.roots : [];
+		return { version: r.version ?? 1, roots };
 	} catch {
-		return { version: 1, personalRoot: join(home, "clearvoid", "briefs"), roots: [] };
+		return { version: 1, roots: [] };
 	}
 }
 
@@ -283,10 +401,150 @@ export function loadRoots() {
 export function registerRoot(briefsDir) {
 	const roots = loadRoots();
 	const abs = resolve(briefsDir);
-	if (roots.roots.includes(abs) || abs === resolve(roots.personalRoot)) return false;
+	if (roots.roots.includes(abs)) return false;
 	roots.roots.push(abs);
 	roots.roots.sort();
 	mkdirSync(dirname(rootsPath()), { recursive: true });
 	writeFileSync(rootsPath(), `${JSON.stringify(roots, null, 2)}\n`);
 	return true;
+}
+
+/**
+ * Minimal brief frontmatter read: the scalar fields + the first line of a
+ * `framing: |` block. There is no generated index — the context skill calls
+ * this over the brief files directly to build its selection surface.
+ */
+export function readBriefFrontmatter(text) {
+	const m = text.match(/^---\n([\s\S]*?)\n---/);
+	if (!m) return null;
+	const head = m[1];
+	const fm = {};
+	for (const key of ["title", "summary", "updated", "created"]) {
+		const v = head.match(new RegExp(`^${key}:\\s*(.+)$`, "m"));
+		if (v) fm[key] = v[1].trim();
+	}
+	const block = head.match(/^framing:\s*\|\s*\n((?:[ \t]+.*\n?)+)/m);
+	if (block) {
+		fm.framing = block[1]
+			.split("\n")
+			.map((l) => l.trim())
+			.filter(Boolean)
+			.join(" ");
+	} else {
+		const inline = head.match(/^framing:\s*(.+)$/m);
+		if (inline) fm.framing = inline[1].trim();
+	}
+	return fm;
+}
+
+// ── The watermark: progress.json (pending) → state.json (committed) ──────────
+// CONTEXT: watermarking used to be a per-unit `updateState` call the agent ran
+// after folding each session in. It depended on agent discipline and was
+// silently skipped (a compile would fold 11 sessions into briefs but watermark
+// only 6, so the other 5 re-queued forever). It is now deterministic: the render
+// scripts record what they actually rendered into progress.json as a side
+// effect (given --briefs-dir), and `finalizeState` folds that into state.json
+// once — run as the end-of-run wrap-up, so the "only watermark what was folded
+// in" guarantee holds (a crash before finalize commits nothing and the whole
+// queue re-runs, which is bounded re-work, never lost content).
+
+export function statePath(briefsDir) {
+	return join(briefsDir, ".clearvoid", "state.json");
+}
+
+export function loadState(briefsDir) {
+	try {
+		const s = JSON.parse(readFileSync(statePath(briefsDir), "utf8"));
+		if (!s.sources) s.sources = {};
+		return s;
+	} catch {
+		return { version: 1, sources: {} };
+	}
+}
+
+export function progressPath(briefsDir) {
+	return join(briefsDir, ".clearvoid", "progress.json");
+}
+
+/** Record a rendered unit's watermark as pending. Numeric line offsets advance
+ *  monotonically (max); hash tokens (md) overwrite. Safe to call repeatedly. */
+export function recordProgress(briefsDir, session, units) {
+	const p = progressPath(briefsDir);
+	let pending = {};
+	try {
+		pending = JSON.parse(readFileSync(p, "utf8"));
+	} catch {
+		// no pending file yet
+	}
+	const prev = pending[session];
+	pending[session] =
+		typeof units === "number" && typeof prev === "number"
+			? Math.max(prev, units)
+			: units;
+	mkdirSync(dirname(p), { recursive: true });
+	writeFileSync(p, `${JSON.stringify(pending, null, 2)}\n`);
+}
+
+// session id → [brief slug] reverse map, scanned from the briefs' `sources:`
+// frontmatter. The forward map (brief → sources) is canonical in frontmatter;
+// state.json keeps this reverse map as convenience provenance.
+function sessionBriefMap(briefsDir) {
+	const map = {};
+	let files = [];
+	try {
+		files = readdirSync(briefsDir).filter(
+			(f) => f.endsWith(".md") && f !== "README.md",
+		);
+	} catch {
+		return map;
+	}
+	for (const f of files) {
+		let text;
+		try {
+			text = readFileSync(join(briefsDir, f), "utf8");
+		} catch {
+			continue;
+		}
+		const fm = text.match(/^---\n([\s\S]*?)\n---/);
+		if (!fm) continue;
+		const slug = f.replace(/\.md$/, "");
+		for (const m of fm[1].matchAll(/-\s*((?:claude-code|md):\S+)/g)) {
+			(map[m[1]] ??= []).push(slug);
+		}
+	}
+	return map;
+}
+
+/** Fold pending progress into the committed watermark, then clear it. Returns
+ *  the list of session ids committed. Idempotent: nothing pending → no-op. */
+export function commitProgress(briefsDir) {
+	const p = progressPath(briefsDir);
+	let pending;
+	try {
+		pending = JSON.parse(readFileSync(p, "utf8"));
+	} catch {
+		return [];
+	}
+	const sessions = Object.keys(pending);
+	if (sessions.length === 0) {
+		rmSync(p, { force: true });
+		return [];
+	}
+	const state = loadState(briefsDir);
+	const touched = sessionBriefMap(briefsDir);
+	const at = new Date().toISOString();
+	for (const id of sessions) {
+		const prev = state.sources[id];
+		state.sources[id] = {
+			units: pending[id],
+			compiledAt: at,
+			briefs: [
+				...new Set([...(prev?.briefs ?? []), ...(touched[id] ?? [])]),
+			].sort(),
+		};
+	}
+	mkdirSync(dirname(statePath(briefsDir)), { recursive: true });
+	writeFileSync(statePath(briefsDir), `${JSON.stringify(state, null, 2)}\n`);
+	rmSync(p, { force: true });
+	return sessions;
 }

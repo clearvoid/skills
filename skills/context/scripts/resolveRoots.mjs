@@ -1,13 +1,20 @@
 #!/usr/bin/env node
 // Resolve every place the user's briefs live: the current repo's briefs/ plus the
-// ~/.clearvoid/roots.json registry (personal root + other registered repos).
-// JSON on stdout — the context skill reads this, then the indexes, then the briefs.
+// ~/.clearvoid/roots.json registry (the other registered repos), and emit one line
+// per brief (slug, title, summary, updated) read straight from each file's
+// frontmatter. There is no generated index — this output IS the selection surface.
+// JSON on stdout; the context skill reads this, then loads the briefs it picks.
 //
 // Usage: node resolveRoots.mjs [--cwd <path>]
 
 import { existsSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { findRepoRoots, loadRoots } from "../../compile/scripts/lib.mjs";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import {
+	findRepoRoots,
+	loadRoots,
+	readBriefFrontmatter,
+	walk,
+} from "../../compile/scripts/lib.mjs";
 
 function arg(name, fallback) {
 	const i = process.argv.indexOf(name);
@@ -18,28 +25,54 @@ const cwd = arg("--cwd", process.cwd());
 const repo = findRepoRoots(cwd);
 const registry = loadRoots();
 
+// Collect every .md under the briefs root, at any depth, skipping dotdirs
+// (.clearvoid) and README.md (the shared walk() skips dotdirs; the predicate adds
+// the README.md exclusion). Collections are subfolders under briefs/ — the brief's
+// folder relative to the root is its collection ("" = top-level).
+const isBrief = (p) => p.endsWith(".md") && basename(p) !== "README.md";
+
 function describe(briefsDir, kind) {
 	const dir = resolve(briefsDir);
-	const index = join(dir, "README.md");
-	let briefCount = 0;
-	try {
-		briefCount = readFileSync(index, "utf8").split("\n").filter((l) => l.startsWith("- ")).length;
-	} catch {
-		// no index yet
+	const briefs = [];
+	for (const file of walk(dir, isBrief, [])) {
+		let fm;
+		try {
+			fm = readBriefFrontmatter(readFileSync(file, "utf8"));
+		} catch {
+			continue;
+		}
+		if (!fm?.title) continue;
+		const summary =
+			fm.summary ??
+			(fm.framing ? fm.framing.split(". ")[0].replace(/\.?$/, ".") : "");
+		// Collection = the brief's folder relative to the briefs root, posix-style.
+		const collection = relative(dir, dirname(file)).split(sep).join("/");
+		briefs.push({
+			slug: basename(file, ".md"),
+			collection,
+			title: fm.title,
+			summary,
+			updated: fm.updated ?? "",
+		});
 	}
+	briefs.sort(
+		(a, b) =>
+			a.collection.localeCompare(b.collection) ||
+			b.updated.localeCompare(a.updated) ||
+			a.title.localeCompare(b.title),
+	);
 	return {
 		kind,
 		briefsDir: dir,
 		exists: existsSync(dir),
-		index: existsSync(index) ? index : null,
-		briefCount,
+		briefCount: briefs.length,
+		briefs,
 	};
 }
 
 const currentDir = repo ? join(repo.checkoutRoot, "briefs") : null;
 const out = {
 	current: currentDir ? describe(currentDir, "current-repo") : null,
-	personal: describe(registry.personalRoot, "personal"),
 	others: registry.roots
 		.filter((r) => !currentDir || resolve(r) !== resolve(currentDir))
 		.map((r) => describe(r, "registered")),

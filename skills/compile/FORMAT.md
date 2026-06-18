@@ -1,29 +1,46 @@
 # Brief file format & folder convention — v0
 
 The contract every client shares: the compile skill, the desktop app, any editor, any agent.
-Files are canonical; everything else is a derived index or a client.
+Files are canonical; everything else is a client.
 
 ## Layout
 
 ```
 <repo root>/
   briefs/
-    README.md                  # generated index: title + one-line framing per brief.
-                               #  GitHub renders it as the folder landing page; this is
-                               #  the v0 navigator (wikilinks don't resolve on GitHub).
-    <slug>.md                  # one brief per file, kebab-case slug
+    <slug>.md                  # one brief per file, kebab-case slug (top-level collection)
+    <collection>/              # an optional subfolder grouping — a "collection"
+      <slug>.md
+      .clearvoid/
+        state.json             # one watermark per collection dir
     .clearvoid/
       state.json               # compile bookkeeping (committed — team-shared watermark)
       ignore                   # source-unit ids/globs excluded from compile (committed)
+  raw/                         # url-sourced extracted substrate (sibling of briefs/, see below)
 ```
 
-No other artifacts are ever written into the user's repo — no HTML viewers, no generated
-blobs. Markdown IS the viewer story: briefs render natively on GitHub, Obsidian, and any
-editor. (An on-demand local viewer — `npx clearvoid view`-shaped — is a possible later
+No artifacts are ever written into the user's repo besides the brief files themselves —
+no generated index/`README.md`, no HTML viewers, no generated blobs. The read side (the
+context skill, the workbench) builds its selection surface by scanning brief frontmatter
+on demand. Markdown IS the viewer story: briefs render natively on GitHub, Obsidian, and
+any editor. (An on-demand local viewer — `npx clearvoid view`-shaped — is a possible later
 client; it is never a committed file.)
 
 Everything Clearvoid-related lives inside `briefs/` — deleting the folder is a complete
 reset. No state anywhere else; no global config required.
+
+## Collections (subfolders under `briefs/`)
+
+Briefs may live in subfolders under `briefs/` at **any depth** — a "collection" is a brief's folder path relative to `briefs/`: `""` for `briefs/<slug>.md` (the top-level / default collection), `yc-ai` for `briefs/yc-ai/<slug>.md`, `ai/agents` for `briefs/ai/agents/<slug>.md`. A collection is a deliberate user grouping — video briefs vs CRM briefs vs daily checkins, say, all in one repo — and is orthogonal to both source (where the material came from) and topic (what the brief is about).
+
+- **Targeting with `to:<path>`.** The compile directive may carry a `to:<path>` token that picks the destination collection: `to:yc-ai` writes into `briefs/yc-ai/`, `to:ai/agents` into `briefs/ai/agents/`. No `to:` token writes to the `briefs/` top level. (The destination root is still `<cwd>/briefs` or an explicit `--briefs-dir`; `to:` selects a subfolder inside it.)
+- **Compile is scoped to one collection.** A run reads, writes, clusters, and watermarks only within the targeted collection dir, flat — it does not recurse into sibling or child collections. Each collection carries its **own** watermark at `briefs/<path>/.clearvoid/state.json`, so two collections in the same repo compile independently and never cross-contaminate each other's offsets.
+- **Compile registers the root, not the collection.** `registerRoot.mjs` always registers the briefs **root** (`<repo>/briefs`), never a collection subdir — so the read side discovers every collection from the single registered entry. The registry stays one entry per repo (see Cross-project roots).
+- **Readers recurse.** The read side (the context skill, the desktop workbench) walks the registered briefs root **recursively** to find briefs at any depth, skipping any `.clearvoid/` dir (at any depth) and `README.md`. A brief's collection is just its relpath from the root, recovered while walking.
+
+## `raw/` — url-sourced substrate (sibling of `briefs/`)
+
+The `url:` source caches the extracted markdown it fetches at `<repo root>/raw/<key>.md` — at the **repo root**, a sibling of `briefs/`, deliberately **outside** `briefs/` so the recursive brief reader never mistakes a transcript or article body for a brief. (Inside `briefs/`, recursion would otherwise pick it up.) The cache is plain markdown with a small header (`source_type`, `url`, `title`, …) and is safe to keep indefinitely; gitignoring `raw/` is left to the user. See `sources/url.md`.
 
 ## Brief file
 
@@ -33,8 +50,7 @@ title: Content pipeline: X/tweet extraction
 framing: |
   How tweet/X content gets extracted and processed. Track the pipeline shape,
   where bugs cluster, and decisions about structured metadata.
-framing_source: ai_seeded        # ai_seeded | human — human means promoted/edited
-summary: One line distilling the current view — feeds the generated index and the context skill's selection.
+summary: One line distilling the current view — the context skill's selection surface is built from it.
 created: 2026-06-10
 updated: 2026-06-10
 sources:
@@ -50,17 +66,21 @@ Wikilinks to sibling briefs use [[other-brief-slug]].
 
 Rules:
 
-- **Framing is the human anchor.** The compile loop may *seed* a framing
-  (`framing_source: ai_seeded`); only a human edit makes it `human`. Promotion IS editing
-  the framing — no separate status enum (matches the desktop substrate's collapse of
-  candidate/canonical into framing-edit-only).
-- **The skill updates content within a framing; it never rewrites a `human` framing.**
+- **Framing is the human anchor.** Compile *seeds* a framing once, when it first creates a
+  brief, and never rewrites it afterward. The framing is the human's from the moment the
+  brief exists; compile only ever updates the body (current view) beneath it. Edit the
+  framing in any editor and the next compile respects it without being told to. There is no
+  status field and no promotion step: nothing to keep in sync.
+- **The skill updates content within a framing; it never rewrites an existing framing.**
 - **Obsidian-renderable by construction:** standard YAML frontmatter, plain markdown body,
   native wikilinks. No custom syntax, no Tailwind-of-markdown.
 - **No hard-wrapping inside paragraphs — one paragraph per line.** Briefs are retrieved by grep and reviewed by diff; a phrase that spans a wrapped line breaks search, and re-flowed paragraphs turn one-word edits into wall-of-churn diffs.
-- Source ids are namespaced from day one: `claude-code:<sessionId>`,
-  `chatgpt:<conversationId>`, `md:<relative-path>` — v0 only emits `claude-code:` but the
-  schema is source-aware so ChatGPT export (article #2) drops in without migration.
+- Source ids are namespaced from day one: `claude-code:<sessionId>`, `md:<abs-path>`,
+  `url:<canonical-url>`, `chatgpt:<conversationId>` — the schema is source-aware, so each new
+  source drops in without migration. The `url:` id is the canonical URL itself (the same
+  string the watermark uses); it stays resolvable as long as the page exists (and the `raw/`
+  cache keeps a local copy of the extracted substrate regardless). See the per-source docs
+  under `sources/`.
 
 ## state.json (the visited-sessions watermark)
 
@@ -81,7 +101,12 @@ Rules:
   not a boolean. Sessions grow; the next run renders only lines past the offset
   (`renderSession --from-line`). (The resume-offset pattern; a visited *flag* would either
   skip new messages or recompile whole sessions.) Other sources define their own unit in
-  their source module (e.g. conversations for a ChatGPT export).
+  their source module: the `md:` source's unit is a whole file and its watermark is a
+  content hash (`sha256:<hex>`); the `url:` source's unit is a URL and its watermark is the
+  canonical URL itself (a stable string — published content doesn't change, so a compiled URL
+  never auto-re-queues). `units` is therefore an opaque per-source token, compared by the
+  source, not always a count.
+- **One state.json per collection.** The watermark lives at `<briefs-dir>/<collection>/.clearvoid/state.json` for whatever collection the run targeted — the top-level `briefs/.clearvoid/state.json` for the default collection, `briefs/yc-ai/.clearvoid/state.json` for `to:yc-ai`, etc. A run only reads and writes its own collection's watermark, so collections stay incrementally independent (see Collections).
 - **Committed to git, deliberately:** sessions are per-user (ids never collide across
   machines), so a shared watermark gives the team incremental semantics for free — a new
   teammate's compile doesn't refold what others already folded in. Content-free by rule:
@@ -106,13 +131,13 @@ A registry of every place briefs live, shared by all clients (skills, the deskto
 ```json
 {
   "version": 1,
-  "personalRoot": "~/clearvoid/briefs",
   "roots": ["/Users/x/code/some-repo/briefs"]
 }
 ```
 
-- `buildIndex.mjs` (run at the end of every compile) auto-registers the repo's `briefs/`; the personal root holds briefs tied to no repo.
-- Read-side tools (the `context` skill, the workbench) aggregate across the current repo + the registry. Compile only ever writes to the root it was pointed at.
+- A flat `{ version, roots }` — no `personalRoot`. The destination is always explicit: compile writes to `<cwd>/briefs` or an explicit `--briefs-dir`, so a special repo-less "personal" home has no job. A legacy file carrying a `personalRoot` key self-heals (the key is dropped on the next write).
+- Compile auto-registers the destination `briefs/` **root** at the end of every run (the `registerRoot.mjs` step) — never a collection subdir. The registry stays **one entry per repo**; readers recurse into collections from that single entry (see Collections).
+- Read-side tools (the `context` skill, the workbench) aggregate across the current repo + the registry, recursing into every collection under each root. Compile only ever writes to the collection it was pointed at.
 - `CLEARVOID_HOME_DIR` overrides `$HOME` for the registry too (hermetic tests).
 
 ## What we deliberately lose vs the desktop SQLite path
