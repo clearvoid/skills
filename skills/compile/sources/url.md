@@ -46,6 +46,10 @@ The endpoint returns `200 { status:"completed", title, markdown, source_type, au
 
 A channel selector (`channel:<id-or-url>`, a `/@handle` or `/channel/UC...` URL) resolves to the channel's latest videos via the public RSS feed `https://www.youtube.com/feeds/videos.xml?channel_id=<UC...>` — no API key, ~15 newest videos. A raw `UC...` id or a `/channel/UC...` URL is used directly; a `/@handle` (or other channel page) is fetched and its `channelId` scraped from the HTML. Each `<yt:videoId>` becomes a watch URL unit. **The RSS feed caps at ~15 videos with no pagination** — `listUrl` surfaces this in `warnings` (no silent truncation); going deeper requires the YouTube Data API (key + quota), which is not built. Re-run later to pick up new uploads.
 
+## Length: read it, never estimate it
+
+Never state a video's duration, "minutes into the transcript", or reading length by eyeballing the token/byte count — that guess is routinely off by 3–4× (a 46-min video reads as "~13 min"). A YouTube transcript body is line-prefixed with `[MM:SS]` / `[H:MM:SS]` timestamps and `renderUrl` surfaces the largest one as `transcript runs to <stamp>` on its size line — that figure is the real runtime; report it verbatim or not at all. An article or tweet has no timestamps, so it has no duration: don't invent one.
+
 ## Provenance
 
 Brief frontmatter `sources:` carries the `url:<canonical-url>` ids, same as the other sources. URL provenance pointers stay resolvable as long as the page exists at that URL (and the raw cache keeps a local copy of the extracted substrate regardless).

@@ -244,6 +244,20 @@ export function claudeProjectsDir() {
 }
 
 /**
+ * Collapse a path inside a worktree (`<root>/.claude/worktrees/<name>/...`) back to
+ * the equivalent path under the repo family root, e.g. `<root>/.claude/worktrees/foo/
+ * briefs` → `<root>/briefs`. Worktrees are part of the repo family: briefs compiled on
+ * a worktree branch belong to the repo, so the registry and the read-side dedup must
+ * treat the worktree path and the main checkout path as ONE root, never two. A path
+ * not inside a worktree is returned unchanged (resolved).
+ */
+export function collapseWorktreePath(p) {
+	const abs = resolve(p);
+	const m = abs.match(/^(.*?)\/\.claude\/worktrees\/[^/]+(\/.*)?$/);
+	return m ? resolve(m[1] + (m[2] ?? "")) : abs;
+}
+
+/**
  * Nearest ancestor containing .git (dir in a checkout, file in a worktree).
  * `checkoutRoot` is where briefs/ lives (a worktree writes briefs onto its OWN
  * branch); `matchRoot` collapses <root>/.claude/worktrees/<name> back to <root>
@@ -257,8 +271,7 @@ export function findRepoRoots(start) {
 		if (parent === dir) return null;
 		dir = parent;
 	}
-	const m = dir.match(/^(.*?)\/\.claude\/worktrees\/[^/]+$/);
-	return { checkoutRoot: dir, matchRoot: m ? m[1] : dir };
+	return { checkoutRoot: dir, matchRoot: collapseWorktreePath(dir) };
 }
 
 /**
@@ -397,10 +410,15 @@ export function loadRoots() {
 	}
 }
 
-/** Idempotently add a briefs dir to the registry. Returns true if it was new. */
+/**
+ * Idempotently add a briefs dir to the registry. Returns true if it was new.
+ * A worktree's briefs path collapses to the repo family root first, so compiling
+ * from a worktree never leaves an ephemeral `.../worktrees/<name>/briefs` entry that
+ * dangles once the worktree is cleaned up — one stable entry per repo.
+ */
 export function registerRoot(briefsDir) {
 	const roots = loadRoots();
-	const abs = resolve(briefsDir);
+	const abs = collapseWorktreePath(briefsDir);
 	if (roots.roots.includes(abs)) return false;
 	roots.roots.push(abs);
 	roots.roots.sort();

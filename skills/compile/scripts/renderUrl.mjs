@@ -164,11 +164,42 @@ if (fromCache) {
 // Body for size accounting = everything after the frontmatter header.
 const body = rawText.replace(/^---\n[\s\S]*?\n---\n?/, "").trim();
 
+// A YouTube transcript body is line-prefixed with `[MM:SS]` / `[H:MM:SS]` stamps
+// (see the extract endpoint's transcript formatter). The largest such stamp IS the
+// video's real runtime — the only reliable length signal we have (the extract API
+// returns no duration field). Surfacing it stops the agent from inventing a duration
+// by eyeballing the token count, which is wildly off (a guessed "~13 min" for a 46-min
+// video). Returns null for non-transcript bodies (articles/tweets have no stamps).
+function transcriptRuntime(text) {
+	let maxSec = -1;
+	const re = /^\[(?:(\d+):)?(\d+):(\d{2})\]/gm;
+	let m;
+	while ((m = re.exec(text)) !== null) {
+		const h = m[1] ? Number(m[1]) : 0;
+		const sec = h * 3600 + Number(m[2]) * 60 + Number(m[3]);
+		if (sec > maxSec) maxSec = sec;
+	}
+	if (maxSec < 0) return null;
+	const h = Math.floor(maxSec / 3600);
+	const mm = Math.floor((maxSec % 3600) / 60);
+	const ss = maxSec % 60;
+	return h > 0
+		? `${h}:${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`
+		: `${mm}:${String(ss).padStart(2, "0")}`;
+}
+
 // Watermark = the canonical URL, recorded the moment we have substrate. Matches
 // listUrl's `url` watermark, so a finalized URL re-queues with nothing new.
 if (briefsDir) recordProgress(briefsDir, `url:${canonical}`, canonical);
 
-const size = `~${Math.ceil(body.length / 4)} tokens · ${rawText.length} bytes`;
+const runtime = transcriptRuntime(body);
+const size = [
+	`~${Math.ceil(body.length / 4)} tokens`,
+	runtime ? `transcript runs to ${runtime}` : null,
+	`${rawText.length} bytes`,
+]
+	.filter(Boolean)
+	.join(" · ");
 if (fromCache) {
 	// Cache hit — no metadata reconstruction, just the marker + size.
 	console.log([`# url ${canonical}`, `${size} · cached`].join("\n"));

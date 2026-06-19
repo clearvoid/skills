@@ -106,7 +106,11 @@ The conversation stays live during a run — treat mid-run steering ("skip that 
    or files), date span where applicable, and total substrate size from the queue's
    `newTokens` sum (NEVER from `bytes`: raw substrate overstates 30–300×) — and the window
    plan. Proceed immediately; the user can interrupt. Never wait for confirmation
-   (non-interactive runs hang on questions).
+   (non-interactive runs hang on questions). Report length only from what a script gives
+   you: never estimate a video's duration or "minutes into the transcript" from token/byte
+   counts (that guess runs 3–4× off). For a url transcript, the only length is the
+   `transcript runs to <stamp>` figure `renderUrl` derives from the transcript's own
+   timestamps — quote it or say nothing.
 
 4. **Pre-scan.** Read the queue's `title`/`firstMessage` fields across the whole backlog
    to form a rough map of recurring threads before walking any session.

@@ -7,7 +7,7 @@
 			"name": "clearvoid",
 			"source": "./",
 			"description": "Compile your Claude Code sessions into living markdown briefs — in your repo, in files you own.",
-			"version": "0.6.0",
+			"version": "0.6.2",
 			"category": "productivity"
 		}
 	]

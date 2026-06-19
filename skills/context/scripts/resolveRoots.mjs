@@ -10,6 +10,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import {
+	collapseWorktreePath,
 	findRepoRoots,
 	loadRoots,
 	readBriefFrontmatter,
@@ -70,11 +71,17 @@ function describe(briefsDir, kind) {
 	};
 }
 
+// Load the briefs of the repo you're sitting in (the worktree's own briefs/ when in
+// one). For dedup, collapse to the FAMILY root: the registry holds one entry per repo
+// (the main checkout path), so a worktree must dedup against that collapsed key or it
+// would load the same repo's briefs twice. collapseWorktreePath also catches any legacy
+// `.../worktrees/<name>/briefs` entry an older compile may have left in the registry.
 const currentDir = repo ? join(repo.checkoutRoot, "briefs") : null;
+const currentKey = currentDir ? collapseWorktreePath(currentDir) : null;
 const out = {
 	current: currentDir ? describe(currentDir, "current-repo") : null,
 	others: registry.roots
-		.filter((r) => !currentDir || resolve(r) !== resolve(currentDir))
+		.filter((r) => !currentKey || collapseWorktreePath(r) !== currentKey)
 		.map((r) => describe(r, "registered")),
 };
 
