@@ -1,6 +1,6 @@
 # clearvoid
 
-Compile your Claude Code sessions into **briefs** — living markdown files that hold what
+Compile your sessions, notes, and links into **briefs** — living markdown files that hold what
 each project decided, where it's heading, and why. In your repo, in files you own.
 
 ```

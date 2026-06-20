@@ -10,10 +10,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import {
-	collapseWorktreePath,
+	canonicalRoot,
 	findRepoRoots,
 	loadRoots,
+	matchesRootEntry,
 	readBriefFrontmatter,
+	resolveContextScope,
+	rootDisplayName,
 	walk,
 } from "../../compile/scripts/lib.mjs";
 
@@ -64,10 +67,25 @@ function describe(briefsDir, kind) {
 	);
 	return {
 		kind,
+		name: rootDisplayName(dir),
 		briefsDir: dir,
 		exists: existsSync(dir),
 		briefCount: briefs.length,
 		briefs,
+	};
+}
+
+// A registered root that scope left OUT of the selection pool: name + count only,
+// never its brief lines — out-of-scope briefs must not leak into the surface. The
+// context skill surfaces these so the user can opt one in (include list / scope).
+function describeAvailable(briefsDir) {
+	const dir = resolve(briefsDir);
+	return {
+		kind: "available",
+		name: rootDisplayName(dir),
+		briefsDir: dir,
+		exists: existsSync(dir),
+		briefCount: walk(dir, isBrief, []).length,
 	};
 }
 
@@ -77,12 +95,32 @@ function describe(briefsDir, kind) {
 // would load the same repo's briefs twice. collapseWorktreePath also catches any legacy
 // `.../worktrees/<name>/briefs` entry an older compile may have left in the registry.
 const currentDir = repo ? join(repo.checkoutRoot, "briefs") : null;
-const currentKey = currentDir ? collapseWorktreePath(currentDir) : null;
+const currentKey = currentDir ? canonicalRoot(currentDir) : null;
+
+// Context scope decides which OTHER registered repos enter the selection pool.
+// Default "repo" = isolation (only this repo's briefs); "all" = every registered
+// root; per-repo include/exclude refine either. Exclude always wins. The current
+// repo's own briefs are ALWAYS loaded — scope only governs the others.
+const { scope, include, exclude } = resolveContextScope(currentDir);
+const inScope = (r) => {
+	if (exclude.some((e) => matchesRootEntry(e, r))) return false;
+	if (scope === "all") return true;
+	return include.some((e) => matchesRootEntry(e, r));
+};
+
+const otherRoots = registry.roots.filter(
+	(r) => !currentKey || canonicalRoot(r) !== currentKey,
+);
+const selected = [];
+const available = [];
+for (const r of otherRoots) (inScope(r) ? selected : available).push(r);
+
 const out = {
+	scope,
 	current: currentDir ? describe(currentDir, "current-repo") : null,
-	others: registry.roots
-		.filter((r) => !currentKey || collapseWorktreePath(r) !== currentKey)
-		.map((r) => describe(r, "registered")),
+	others: selected.map((r) => describe(r, "registered")),
+	// Registered but out of scope — name + count only, no brief lines.
+	available: available.map((r) => describeAvailable(r)),
 };
 
 console.log(JSON.stringify(out, null, 2));

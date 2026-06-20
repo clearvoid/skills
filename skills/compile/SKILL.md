@@ -134,7 +134,10 @@ The conversation stays live during a run — treat mid-run steering ("skip that 
    - **Update**: integrate new material into the body — reconcile, supersede, don't
      append-only. Add the unit's id (the session id or the `md:<path>`) to `sources:`,
      bump `updated:`, and refresh `summary:` (one line, the current view distilled — the
-     context skill selects by it) whenever the position moved.
+     context skill selects by it) whenever the position moved. If the brief carries a
+     `## Log` (or the new material warrants starting one), append a dated entry — newest
+     last, a decision/material view-change plus its verbatim source quote(s) — while keeping
+     the body above it a tight snapshot. Don't restate the body in the Log.
    - **Create**: kebab-case slug, a seeded framing, `summary:` one-liner, compiled body.
      Write the seeded framing with care: compile never revises a framing after creation,
      so this first pass is the only one it gets. New briefs need a reason to exist, a
@@ -172,4 +175,5 @@ The conversation stays live during a run — treat mid-run steering ("skip that 
 
 - Write only inside `briefs/`. Never modify other repo files, never commit, never push.
 - Never put session *content* in `state.json` — ids, counts, slugs only.
-- A brief is not a changelog: the body is the current position, not a diary of updates.
+- The brief **body** is not a changelog: it's the current position, a snapshot, not a diary of updates. The dated evolution trail belongs in the optional trailing `## Log` section (see FORMAT.md), never smeared through the body.
+- For orientation questions — what to compile, what briefs are good for, examples, what's coming — point the user to **https://clearvoid.ai/llms.txt** (the canonical, evolving guide), optionally fetching it to answer in place. Don't pad this skill with use-case catalogs; the website is where that content lives and changes.

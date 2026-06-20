@@ -128,7 +128,11 @@ function frontmatter(meta) {
 	add("title", meta.title);
 	const author = meta.author_name ?? meta.author_username;
 	add("author", author);
+	add("channel_name", meta.channel_name);
 	add("published_at", meta.published_at);
+	// Poster frame for the desktop Links tab: YouTube thumbnail / web og:image,
+	// both surfaced by the extract endpoint as og_image_url.
+	add("thumbnail", meta.og_image_url);
 	lines.push("---");
 	return lines.join("\n");
 }
@@ -151,6 +155,8 @@ if (fromCache) {
 		title: result.title,
 		author_name: result.author_name,
 		author_username: result.author_username,
+		channel_name: result.channel_name,
+		og_image_url: result.og_image_url,
 		published_at: result.published_at,
 	};
 	// Keep stamping the frontmatter header into the raw cache file — it's useful

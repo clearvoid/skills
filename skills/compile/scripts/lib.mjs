@@ -10,11 +10,12 @@ import {
 	mkdirSync,
 	readdirSync,
 	readFileSync,
+	realpathSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 
 // FRAGILE: mirrors what Claude Code emits; grows across CC versions.
 const BLOCK_CHROME_TAGS = [
@@ -258,6 +259,34 @@ export function collapseWorktreePath(p) {
 }
 
 /**
+ * Canonical identity of a briefs root for equality: collapse worktree paths to the
+ * family root, then resolve symlinks. FRAGILE: on macOS the same repo reaches us under
+ * both `/var/folders/...` and `/private/var/folders/...` (the agent's cwd resolves the
+ * /var → /private symlink, our cwd doesn't), so a string compare would treat one repo
+ * as two and fail to dedup the current repo out of the registry. realpath collapses
+ * both spellings; falls back to the collapsed path when the dir doesn't exist (a
+ * registered repo whose briefs/ was since deleted).
+ */
+export function canonicalRoot(p) {
+	const collapsed = collapseWorktreePath(p);
+	try {
+		return realpathSync(collapsed);
+	} catch {
+		return collapsed;
+	}
+}
+
+/**
+ * Display name for a briefs root: the repo folder that contains `briefs/`
+ * (`/x/brain/briefs` → `brain`). Stable across machines, so it is the portable,
+ * commit-safe way to name another repo in a context include/exclude list. Mirrors
+ * the desktop viewer's `label` (basename of the briefs dir's parent).
+ */
+export function rootDisplayName(briefsDir) {
+	return basename(dirname(resolve(briefsDir))) || resolve(briefsDir);
+}
+
+/**
  * Nearest ancestor containing .git (dir in a checkout, file in a worktree).
  * `checkoutRoot` is where briefs/ lives (a worktree writes briefs onto its OWN
  * branch); `matchRoot` collapses <root>/.claude/worktrees/<name> back to <root>
@@ -425,6 +454,87 @@ export function registerRoot(briefsDir) {
 	mkdirSync(dirname(rootsPath()), { recursive: true });
 	writeFileSync(rootsPath(), `${JSON.stringify(roots, null, 2)}\n`);
 	return true;
+}
+
+// ── Context scope config: which OTHER repos a session pulls in ─────────────
+// Two optional, layered files (defaults work with zero config):
+//   global  ~/.clearvoid/config.json        { "context": { "scope": "repo" | "all" } }
+//   per-repo <briefsDir>/.clearvoid/config.json
+//       { "context": { "scope"?, "include": [...], "exclude": [...] } }
+// Only the READ side (context skill) consults these — the desktop viewer stays
+// omniscient and compile never reads them. Default scope is "repo" (isolation):
+// a session loads only its own repo's briefs unless widened. Per-repo overrides
+// global; exclude always wins over include/scope. Include/exclude entries name a
+// repo by display name (`brain`) — portable, commit-safe — or by an absolute/`~`
+// path to the briefs dir or the repo dir.
+
+export function globalConfigPath() {
+	const home = process.env.CLEARVOID_HOME_DIR ?? homedir();
+	return join(home, ".clearvoid", "config.json");
+}
+
+export function loadGlobalConfig() {
+	try {
+		return JSON.parse(readFileSync(globalConfigPath(), "utf8"));
+	} catch {
+		return {};
+	}
+}
+
+export function repoConfigPath(briefsDir) {
+	return join(briefsDir, ".clearvoid", "config.json");
+}
+
+export function loadRepoConfig(briefsDir) {
+	try {
+		return JSON.parse(readFileSync(repoConfigPath(briefsDir), "utf8"));
+	} catch {
+		return {};
+	}
+}
+
+function expandHome(p) {
+	if (p === "~" || p.startsWith("~/")) {
+		return join(homedir(), p.slice(1));
+	}
+	return p;
+}
+
+/**
+ * Does an include/exclude entry refer to this briefs root? Matches by display
+ * name (`brain`), or — when the entry looks like a path — by the resolved briefs
+ * dir or its parent repo dir. Worktree paths collapse to the family root first so
+ * a name/path match is stable regardless of which checkout is registered.
+ */
+export function matchesRootEntry(entry, briefsDir) {
+	if (typeof entry !== "string") return false;
+	const e = entry.trim();
+	if (!e) return false;
+	const root = canonicalRoot(briefsDir);
+	if (e === rootDisplayName(root)) return true;
+	if (e.includes("/") || e.startsWith("~") || e.startsWith(".")) {
+		const abs = canonicalRoot(resolve(expandHome(e)));
+		if (abs === root) return true;
+		if (canonicalRoot(join(resolve(expandHome(e)), "briefs")) === root) return true;
+	}
+	return false;
+}
+
+/**
+ * Resolve the effective context scope for a session sitting in `currentBriefsDir`.
+ * Returns { scope, include, exclude } with per-repo overriding global and sane
+ * defaults (scope "repo", empty lists).
+ */
+export function resolveContextScope(currentBriefsDir) {
+	const global = loadGlobalConfig();
+	const repo = currentBriefsDir ? loadRepoConfig(currentBriefsDir) : {};
+	const gctx = global.context ?? {};
+	const rctx = repo.context ?? {};
+	return {
+		scope: rctx.scope ?? gctx.scope ?? "repo",
+		include: Array.isArray(rctx.include) ? rctx.include : [],
+		exclude: Array.isArray(rctx.exclude) ? rctx.exclude : [],
+	};
 }
 
 /**

@@ -31,7 +31,7 @@ A **free** source that turns any URL into clean markdown via the hosted extract 
 
 ## The raw cache
 
-Fetched substrate is cached at `<repoRoot>/raw/<key>` (`<key>` is `youtube-<videoId>.md` for a YouTube watch URL, else a filesystem-safe slug of the canonical URL). `listUrl` reports the resolved `rawDir`; `renderUrl` reads `--raw-dir`. On a cache hit `renderUrl` reads the file and does **no** network. The cached file carries a small frontmatter header (`source_type`, `url`, `title`, `author`, `published_at`) above the extracted body, so re-renders are deterministic and offline. A published page doesn't change, so the cache is safe to keep indefinitely; delete a file to force a re-fetch.
+Fetched substrate is cached at `<repoRoot>/raw/<key>` (`<key>` is `youtube-<videoId>.md` for a YouTube watch URL, else a filesystem-safe slug of the canonical URL). `listUrl` reports the resolved `rawDir`; `renderUrl` reads `--raw-dir`. On a cache hit `renderUrl` reads the file and does **no** network. The cached file carries a small frontmatter header (`source_type`, `url`, `title`, `author`, `channel_name`, `published_at`, `thumbnail`) above the extracted body, so re-renders are deterministic and offline. `channel_name` + `thumbnail` (the YouTube thumbnail or web `og:image`) are bookmark metadata the desktop Links tab reads. A published page doesn't change, so the cache is safe to keep indefinitely; delete a file to force a re-fetch.
 
 ## Env vars
 
@@ -40,7 +40,7 @@ Fetched substrate is cached at `<repoRoot>/raw/<key>` (`<key>` is `youtube-<vide
 - `CLEARVOID_EXTRACT_URL` — the endpoint (default `https://kolnqincbwtmxtbswaet.supabase.co/functions/v1/extract`).
 - `CLEARVOID_EXTRACT_TOKEN` — optional Bearer token. The public endpoint is open (the monthly cap + per-IP rate limit are the guardrails), so this is only needed against a deployment configured closed; when set it is sent as `Authorization: Bearer <token>`.
 
-The endpoint returns `200 { status:"completed", title, markdown, source_type, author_name, author_username, published_at }` on success; a `202 { status:"pending", contentId }` means the extraction is still running — `renderUrl` re-polls by `contentId` every few seconds up to ~3 min until it completes (a `422`/4xx/5xx surfaces as a clear error). `listUrl` never touches the endpoint.
+The endpoint returns `200 { status:"completed", title, markdown, source_type, author_name, author_username, published_at, channel_name, og_image_url }` on success; a `202 { status:"pending", contentId }` means the extraction is still running — `renderUrl` re-polls by `contentId` every few seconds up to ~3 min until it completes (a `422`/4xx/5xx surfaces as a clear error). `listUrl` never touches the endpoint.
 
 ## Channel feed
 
