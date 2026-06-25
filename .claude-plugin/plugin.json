@@ -1,7 +1,7 @@
 {
 	"name": "clearvoid",
 	"description": "Compile your sessions, notes, and links into living markdown briefs — in your repo, in files you own.",
-	"version": "0.9.0",
+	"version": "0.9.1",
 	"author": { "name": "Alex Peretti" },
 	"homepage": "https://clearvoid.ai",
 	"repository": "https://github.com/clearvoid/skills",

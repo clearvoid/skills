@@ -23,10 +23,12 @@ The instruction is the *what*. This skill fixes only the *how*: the house style,
 ## Output contract
 
 - **A clean fragment, not a document.** Output body content only: no `<!doctype>`, no `<html>`, `<head>`, or `<body>`. The desktop host injects the doctype, the house stylesheet, a strict CSP, and a resize reporter, then renders your fragment inside a `<main class="cv-artifact">` wrapper in a sandboxed iframe. Do not add chrome the host already provides.
+- **Fill the frame, or use a reading column.** The `.cv-artifact` wrapper now **fills the frame** (full width, no padding). Pick the shape that fits what you are building:
+  - **Visual / app / full-bleed** (a dashboard meant to fill, a demo, a canvas, a "black page with a spinning dot"): own the whole frame. Use `position: fixed; inset: 0` or `width: 100%; height: 100dvh` on your root, no rounded "stage" card trying to look contained, let it bleed to the edges. The viewer has a full-screen button for these.
+  - **Document / report / one-pager** (readable text, briefs overview): wrap your content in `<div class="cv-prose">…</div>` for a centered reading column with comfortable padding (add `cv-wide`, i.e. `<div class="cv-prose cv-wide">`, for dashboards or wide tables). Without `cv-prose`, text runs edge-to-edge.
 - **Style with the house vocabulary only** (tokens + utilities below). Prefer the utility classes and semantic HTML; the element baseline already styles `h1`-`h3`, `p`, `a`, `ul`/`ol`, `table`, `code`, `pre`, `blockquote`. A small artifact-specific inline `<style>` is allowed for one-offs, but always use the color tokens (never hardcode colors), so the artifact stays consistent with the app's dark theme.
 - **No network anything.** The CSP blocks external scripts, styles, fonts, and remote images (`default-src 'none'`). No CDNs, no Google Fonts, no `<img src="https://...">`. Images must be `data:` URIs or omitted. No React and no external JS libraries.
 - **Interactivity is vanilla JS** in an inline `<script>` (it runs in the sandbox). Keep it small and dependency-free. Derive displayed values from the baked-in data rather than hardcoding them where it is easy (it keeps the artifact honest).
-- **Wide layouts:** add `cv-wide` to your top-level container only if the content needs more than the default reading measure (dashboards, wide tables): the host wrapper is `.cv-artifact`, so emit `<div class="cv-wide">` at the top to widen, or rely on the default.
 
 ## House vocabulary
 
@@ -34,7 +36,7 @@ Mirror of the desktop host's stylesheet (`apps/clearvoid-desktop/src/lib/artifac
 
 **Color tokens** (use via the utilities, or as `var(--color-...)` in an inline style): `--color-background` `--color-foreground` `--color-muted` `--color-subtle` `--color-card` `--color-card-hover` `--color-border` `--color-subtle-light` `--color-accent` `--color-accent-muted` `--color-success` `--color-error` `--color-warn`.
 
-**Component patterns:** `cv-card` (a bordered card surface), `cv-eyebrow` (uppercase mono label), `cv-wide` (widen the container).
+**Layout / component patterns:** `cv-prose` (centered reading column for documents), `cv-prose cv-wide` (a wider column), `cv-card` (a bordered card surface), `cv-eyebrow` (uppercase mono label).
 
 **Utilities** (Tailwind-named, mapped to the tokens):
 - layout: `flex` `grid` `block` `inline-flex` `hidden` `flex-col` `flex-wrap` `items-center` `items-start` `justify-between` `justify-center` `grid-cols-2` `grid-cols-3` `gap-2` `gap-3` `gap-4` `gap-6` `w-full` `min-w-0`
@@ -47,23 +49,37 @@ Only these classes render. If you need something outside the set, use semantic H
 
 ## Minimal example
 
-A fragment (what you write to `artifacts/<slug>.html`):
+A **document** fragment (what you write to `artifacts/<slug>.html`), note the `cv-prose` wrapper for the centered reading column:
 
 ```html
-<p class="cv-eyebrow">PROJECT · STATUS</p>
-<h1>This week at a glance</h1>
-<p class="text-muted">Three things moved. Generated from the repo.</p>
+<div class="cv-prose">
+  <p class="cv-eyebrow">PROJECT · STATUS</p>
+  <h1>This week at a glance</h1>
+  <p class="text-muted">Three things moved. Generated from the repo.</p>
 
-<div class="grid grid-cols-2 gap-4 mt-6">
-  <div class="cv-card">
-    <h3 class="m-0">Shipped</h3>
-    <p class="text-muted m-0 mt-2">The render seam landed and verified.</p>
-  </div>
-  <div class="cv-card">
-    <h3 class="m-0">Open</h3>
-    <p class="text-muted m-0 mt-2">Share + unshare still to wire.</p>
+  <div class="grid grid-cols-2 gap-4 mt-6">
+    <div class="cv-card">
+      <h3 class="m-0">Shipped</h3>
+      <p class="text-muted m-0 mt-2">The render seam landed and verified.</p>
+    </div>
+    <div class="cv-card">
+      <h3 class="m-0">Open</h3>
+      <p class="text-muted m-0 mt-2">Share + unshare still to wire.</p>
+    </div>
   </div>
 </div>
+```
+
+A **full-bleed** fragment (fills the frame, no `cv-prose`):
+
+```html
+<style>
+  .stage { position: fixed; inset: 0; display: grid; place-items: center; background: #000; }
+  .dot { width: 18px; height: 18px; border-radius: 9999px; background: var(--color-accent);
+         box-shadow: 0 0 16px var(--color-accent); transform-origin: 0 -140px; animation: orbit 2.4s linear infinite; }
+  @keyframes orbit { to { transform: rotate(360deg); } }
+</style>
+<div class="stage"><div class="dot"></div></div>
 ```
 
 For ideas and use-cases, see https://clearvoid.ai/llms.txt.
