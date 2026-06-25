@@ -15,7 +15,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
 // FRAGILE: mirrors what Claude Code emits; grows across CC versions.
 const BLOCK_CHROME_TAGS = [
@@ -314,12 +314,12 @@ export function resolveDestination(cwd, explicitBriefsDir) {
 }
 
 /**
- * The write dir for a `to:<path>` collection — a subfolder (any depth) of the
- * briefs root. Collections are the grouping axis: compile reads/writes/watermarks
- * this dir (flat), while `registerRoot` records the *root* so the read side
- * (context skill, desktop app) recurses and sees every collection. No `to:` →
- * write dir IS the root (the default/top-level collection). Guards against `..`
- * escaping the root.
+ * The filing dir for a `to:<path>` collection — a subfolder (any depth) of the
+ * briefs root where NEW briefs from this run land. Collections are folders, not
+ * walls: orientation, the queue, and the watermark all key off the briefs ROOT
+ * (one pool per repo), and a run may update an existing brief in any collection.
+ * `to:` only sets where freshly-created briefs are filed. No `to:` → new briefs
+ * land at the root (top-level). Guards against `..` escaping the root.
  */
 export function resolveCollection(briefsRoot, toPath) {
 	const root = resolve(briefsRoot);
@@ -399,7 +399,7 @@ export function canonicalizeUrl(raw) {
 
 // Recursive walk; skips dotfiles/dotdirs (.git, .clearvoid, etc.). `predicate`
 // decides which files to collect. Shared by listMarkdown (any .md) and the
-// context skill's resolveRoots (briefs: .md minus README.md).
+// recall skill's resolveRoots (briefs: .md minus README.md).
 export function walk(dir, predicate, acc = []) {
 	let entries;
 	try {
@@ -461,7 +461,7 @@ export function registerRoot(briefsDir) {
 //   global  ~/.clearvoid/config.json        { "context": { "scope": "repo" | "all" } }
 //   per-repo <briefsDir>/.clearvoid/config.json
 //       { "context": { "scope"?, "include": [...], "exclude": [...] } }
-// Only the READ side (context skill) consults these — the desktop viewer stays
+// Only the READ side (recall skill) consults these — the desktop viewer stays
 // omniscient and compile never reads them. Default scope is "repo" (isolation):
 // a session loads only its own repo's briefs unless widened. Per-repo overrides
 // global; exclude always wins over include/scope. Include/exclude entries name a
@@ -539,7 +539,7 @@ export function resolveContextScope(currentBriefsDir) {
 
 /**
  * Minimal brief frontmatter read: the scalar fields + the first line of a
- * `framing: |` block. There is no generated index — the context skill calls
+ * `framing: |` block. There is no generated index — the recall skill calls
  * this over the brief files directly to build its selection surface.
  */
 export function readBriefFrontmatter(text) {
@@ -563,6 +563,56 @@ export function readBriefFrontmatter(text) {
 		if (inline) fm.framing = inline[1].trim();
 	}
 	return fm;
+}
+
+/**
+ * The orientation index: every brief in the write dir, each with its framing +
+ * summary, so the `list` step returns it alongside the queue and the compiling
+ * agent has every framing in context before it clusters.
+ *
+ * CONTEXT: orientation (step 1 — "read every existing brief's framing before
+ * clustering") used to be a prose instruction in SKILL.md, and like the watermark
+ * before it (see the progress.json note below) it depended on agent discipline and
+ * degraded silently: the model would grep/sample a keyword subset, miss a recurring
+ * thread that lived only inside another brief's body, and mint a redundant
+ * single-source brief. Making it a deterministic script output guarantees every
+ * framing+summary is in context on every run — the model can't skip the index
+ * because it rides in with the queue it already needs. Always called with the
+ * briefs ROOT, so orientation is global: every brief across every collection is
+ * in context before clustering (collections are folders, not walls). Skips
+ * `.clearvoid/` (walk drops dot-dirs) and README.md.
+ */
+export function loadBriefsIndex(briefsRoot) {
+	const files = walk(
+		briefsRoot,
+		(f) => f.endsWith(".md") && basename(f) !== "README.md",
+	);
+	const briefs = [];
+	for (const file of files) {
+		let fm;
+		try {
+			fm = readBriefFrontmatter(readFileSync(file, "utf8"));
+		} catch {
+			continue;
+		}
+		if (!fm) continue;
+		const rel = relative(briefsRoot, file);
+		const collection = dirname(rel) === "." ? "" : dirname(rel);
+		briefs.push({
+			slug: basename(file, ".md"),
+			collection,
+			title: fm.title ?? null,
+			summary: fm.summary ?? null,
+			framing: fm.framing ?? null,
+			updated: fm.updated ?? null,
+		});
+	}
+	briefs.sort(
+		(a, b) =>
+			(b.updated ?? "").localeCompare(a.updated ?? "") ||
+			a.slug.localeCompare(b.slug),
+	);
+	return briefs;
 }
 
 // ── The watermark: progress.json (pending) → state.json (committed) ──────────
@@ -594,6 +644,47 @@ export function progressPath(briefsDir) {
 	return join(briefsDir, ".clearvoid", "progress.json");
 }
 
+// ── Follow-ups / Actions backlog: briefs/.clearvoid/follow-ups.md ────────────
+// A co-authored, repo-level backlog that lives beside the watermark (in
+// .clearvoid/ so the recursive brief reader never mistakes it for a brief). NOT a
+// brief: compile appends grounded items (research follow-ups + product actions) it
+// would otherwise only mention in the chat report, deduping against what's there and
+// never rewriting a human-authored line; the human edits and deletes freely
+// (deleting a line = done). The read side (recall, backlog mode) surfaces it.
+
+export function followupsPath(briefsDir) {
+	return join(briefsDir, ".clearvoid", "follow-ups.md");
+}
+
+/**
+ * Parse the backlog into its two bullet lists. Sections are the `## Follow-ups`
+ * and `## Actions` headings (case-insensitive); a list item is any line starting
+ * with `- `. Returns `{ followUps, actions }` (the raw bullet text, `- ` stripped),
+ * empty arrays when the file is absent. Deliberately loose — entries are
+ * human-editable prose, so we collect lines, not a rigid schema.
+ */
+export function loadFollowups(briefsDir) {
+	let text;
+	try {
+		text = readFileSync(followupsPath(briefsDir), "utf8");
+	} catch {
+		return { followUps: [], actions: [] };
+	}
+	const out = { followUps: [], actions: [] };
+	let bucket = null;
+	for (const line of text.split("\n")) {
+		const h = line.match(/^##\s+(.+?)\s*$/);
+		if (h) {
+			const name = h[1].toLowerCase();
+			bucket = name.startsWith("follow") ? "followUps" : name.startsWith("action") ? "actions" : null;
+			continue;
+		}
+		const item = line.match(/^\s*-\s+(.*\S)\s*$/);
+		if (item && bucket) out[bucket].push(item[1]);
+	}
+	return out;
+}
+
 /** Record a rendered unit's watermark as pending. Numeric line offsets advance
  *  monotonically (max); hash tokens (md) overwrite. Safe to call repeatedly. */
 export function recordProgress(briefsDir, session, units) {
@@ -613,30 +704,28 @@ export function recordProgress(briefsDir, session, units) {
 	writeFileSync(p, `${JSON.stringify(pending, null, 2)}\n`);
 }
 
-// session id → [brief slug] reverse map, scanned from the briefs' `sources:`
+// source id → [brief slug] reverse map, scanned from the briefs' `sources:`
 // frontmatter. The forward map (brief → sources) is canonical in frontmatter;
-// state.json keeps this reverse map as convenience provenance.
+// state.json keeps this reverse map as convenience provenance. Recurses the briefs
+// root (collections are folders, not walls — a source can produce briefs in any
+// collection), skipping dot-dirs (`.clearvoid/`) and README.md via `walk`.
 function sessionBriefMap(briefsDir) {
 	const map = {};
-	let files = [];
-	try {
-		files = readdirSync(briefsDir).filter(
-			(f) => f.endsWith(".md") && f !== "README.md",
-		);
-	} catch {
-		return map;
-	}
-	for (const f of files) {
+	const files = walk(
+		briefsDir,
+		(f) => f.endsWith(".md") && basename(f) !== "README.md",
+	);
+	for (const file of files) {
 		let text;
 		try {
-			text = readFileSync(join(briefsDir, f), "utf8");
+			text = readFileSync(file, "utf8");
 		} catch {
 			continue;
 		}
 		const fm = text.match(/^---\n([\s\S]*?)\n---/);
 		if (!fm) continue;
-		const slug = f.replace(/\.md$/, "");
-		for (const m of fm[1].matchAll(/-\s*((?:claude-code|md):\S+)/g)) {
+		const slug = basename(file, ".md");
+		for (const m of fm[1].matchAll(/-\s*((?:claude-code|md|url):\S+)/g)) {
 			(map[m[1]] ??= []).push(slug);
 		}
 	}

@@ -3,7 +3,7 @@
 // ~/.clearvoid/roots.json registry (the other registered repos), and emit one line
 // per brief (slug, title, summary, updated) read straight from each file's
 // frontmatter. There is no generated index — this output IS the selection surface.
-// JSON on stdout; the context skill reads this, then loads the briefs it picks.
+// JSON on stdout; the recall skill reads this, then loads the briefs it picks.
 //
 // Usage: node resolveRoots.mjs [--cwd <path>]
 
@@ -12,6 +12,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import {
 	canonicalRoot,
 	findRepoRoots,
+	loadFollowups,
 	loadRoots,
 	matchesRootEntry,
 	readBriefFrontmatter,
@@ -77,7 +78,7 @@ function describe(briefsDir, kind) {
 
 // A registered root that scope left OUT of the selection pool: name + count only,
 // never its brief lines — out-of-scope briefs must not leak into the surface. The
-// context skill surfaces these so the user can opt one in (include list / scope).
+// recall skill surfaces these so the user can opt one in (include list / scope).
 function describeAvailable(briefsDir) {
 	const dir = resolve(briefsDir);
 	return {
@@ -114,6 +115,37 @@ const otherRoots = registry.roots.filter(
 const selected = [];
 const available = [];
 for (const r of otherRoots) (inScope(r) ? selected : available).push(r);
+
+// Backlog mode (recall's `--backlog`): surface each in-scope root's follow-ups /
+// actions backlog (briefs/.clearvoid/follow-ups.md) instead of the brief lines.
+// Same scope rules — the current repo plus whatever context scope lets in; out-of-
+// scope roots stay name+count only.
+if (process.argv.includes("--backlog")) {
+	const describeBacklog = (briefsDir, kind) => {
+		const dir = resolve(briefsDir);
+		return {
+			kind,
+			name: rootDisplayName(dir),
+			briefsDir: dir,
+			exists: existsSync(dir),
+			...loadFollowups(dir),
+		};
+	};
+	console.log(
+		JSON.stringify(
+			{
+				scope,
+				mode: "backlog",
+				current: currentDir ? describeBacklog(currentDir, "current-repo") : null,
+				others: selected.map((r) => describeBacklog(r, "registered")),
+				available: available.map((r) => describeAvailable(r)),
+			},
+			null,
+			2,
+		),
+	);
+	process.exit(0);
+}
 
 const out = {
 	scope,

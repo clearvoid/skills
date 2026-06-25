@@ -19,7 +19,7 @@ A **free** source that turns any URL into clean markdown via the hosted extract 
 | `listUrl.mjs <urlOrChannel...> [--cwd <p>] [--briefs-dir <p>] [--to <p>]` | The queue: canonicalized URLs vs the watermark. JSON. Does NOT fetch content. |
 | `renderUrl.mjs <url:canonical-or-url> [--briefs-dir <p>] [--raw-dir <p>]` | One URL → substrate (header + extracted markdown body); fetches (cache-first) and records its watermark. |
 
-`listUrl` emits the shared queue shape (`{ source, briefsDir, queue, upToDateCount }`) plus, per entry, `watermark` (the canonical URL) and `prevWatermark`. It also emits `errors` (bad selectors) and `warnings` — surface both to the user. Because the substrate lives behind the extract endpoint, `listUrl` never hits the network: `title`/`firstMessage` are placeholders (the URL or video id) and `newTokens` is `0` until `renderUrl` fetches the real content.
+`listUrl` emits the shared queue shape (`{ source, briefsRoot, newBriefsDir, queue, upToDateCount }`) plus, per entry, `watermark` (the canonical URL) and `prevWatermark`. It also emits `errors` (bad selectors) and `warnings` — surface both to the user. Because the substrate lives behind the extract endpoint, `listUrl` never hits the network: `title`/`firstMessage` are placeholders (the URL or video id) and `newTokens` is `0` until `renderUrl` fetches the real content.
 
 ## Units & watermark
 
@@ -32,6 +32,12 @@ A **free** source that turns any URL into clean markdown via the hosted extract 
 ## The raw cache
 
 Fetched substrate is cached at `<repoRoot>/raw/<key>` (`<key>` is `youtube-<videoId>.md` for a YouTube watch URL, else a filesystem-safe slug of the canonical URL). `listUrl` reports the resolved `rawDir`; `renderUrl` reads `--raw-dir`. On a cache hit `renderUrl` reads the file and does **no** network. The cached file carries a small frontmatter header (`source_type`, `url`, `title`, `author`, `channel_name`, `published_at`, `thumbnail`) above the extracted body, so re-renders are deterministic and offline. `channel_name` + `thumbnail` (the YouTube thumbnail or web `og:image`) are bookmark metadata the desktop Links tab reads. A published page doesn't change, so the cache is safe to keep indefinitely; delete a file to force a re-fetch.
+
+## Per-source detailed summary (`raw/<key>.summary.md`)
+
+Beyond folding a url into cross-source briefs, compile writes a **per-source detailed breakdown** — what THIS one source says, start to finish, the reading view the desktop Links tab shows beside the citing briefs. It's complementary to briefs: a brief is synthesis (and dilutes a single long source), the summary is fidelity to the source in order. It lives in a **sibling** of the verbatim cache, `raw/<key>.summary.md` (so the verbatim `raw/<key>.md` stays a pure, byte-faithful, offline cache — the summary, being LLM output, never lands in it). `renderUrl` prints the target as a `summary-target: <abs path>` line; the agent writes the breakdown there with its Write tool (SKILL.md step 6, url-only). The file carries frontmatter `summary_of: <canonical-url>`, `title:`, `generated:` above the markdown body. It is scaled to the source's length (the `transcript runs to <stamp>` runtime / token size is the proportionality signal), sectioned, with `[MM:SS]` anchors for video.
+
+**Frozen at first compile.** Because the url watermark (the canonical URL) holds, a compiled url never auto-re-queues, so the summary is written once and not regenerated on later runs. Improving the breakdown is an explicit re-run (drop the watermark + delete the files); a url compiled before this feature shipped keeps its `raw/<key>.md` but has no summary (it degrades to no reading view, never an error). Deleting `raw/<key>.summary.md` alone does not trigger regeneration — the watermark, not the file's presence, gates the queue.
 
 ## Env vars
 

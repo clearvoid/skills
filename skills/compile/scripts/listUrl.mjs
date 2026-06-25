@@ -23,6 +23,7 @@ import { join, resolve } from "node:path";
 import {
 	canonicalizeUrl,
 	findRepoRoots,
+	loadBriefsIndex,
 	loadRoots,
 	resolveCollection,
 	resolveDestination,
@@ -37,7 +38,10 @@ function arg(name, fallback) {
 
 const cwd = resolve(arg("--cwd", process.cwd()));
 const briefsRoot = resolveDestination(cwd, arg("--briefs-dir"));
-const writeDir = resolveCollection(briefsRoot, arg("--to"));
+// Orientation, queue, and watermark key off briefsRoot (one pool per repo);
+// newBriefsDir is only where NEW briefs from this run are filed (collections are
+// folders, not walls). No `to:` → newBriefsDir is the root.
+const newBriefsDir = resolveCollection(briefsRoot, arg("--to"));
 const repo = findRepoRoots(cwd);
 // raw cache is repo-rooted (a worktree shares its checkout's raw/), falling back
 // to cwd when not in a repo — mirrors where renderUrl expects it.
@@ -174,7 +178,7 @@ const urls = [...new Set(resolved.flat())].sort();
 let state = { version: 1, sources: {} };
 try {
 	state = JSON.parse(
-		readFileSync(join(writeDir, ".clearvoid", "state.json"), "utf8"),
+		readFileSync(join(briefsRoot, ".clearvoid", "state.json"), "utf8"),
 	);
 	if (!state.sources) state.sources = {};
 } catch {
@@ -232,9 +236,10 @@ console.log(
 			source: "url",
 			cwd,
 			briefsRoot,
-			briefsDir: writeDir,
+			newBriefsDir,
 			rawDir,
 			generatedAt: new Date().toISOString(),
+			briefs: loadBriefsIndex(briefsRoot),
 			queue,
 			upToDateCount: upToDate.length,
 			matched: urls.length,

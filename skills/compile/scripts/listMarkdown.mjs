@@ -15,6 +15,7 @@ import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import {
 	findRepoRoots,
+	loadBriefsIndex,
 	loadRoots,
 	resolveCollection,
 	resolveDestination,
@@ -29,10 +30,11 @@ function arg(name, fallback) {
 
 const cwd = resolve(arg("--cwd", process.cwd()));
 const briefsRoot = resolveDestination(cwd, arg("--briefs-dir"));
-// to:<path> lands briefs in a subfolder (collection) of the briefs root. Compile
-// reads/writes/watermarks the write dir; registerRoot (run by the SKILL) records
-// briefsRoot so the read side recurses and sees every collection.
-const briefsDir = resolveCollection(briefsRoot, arg("--to"));
+// Orientation, queue, and watermark all key off briefsRoot (one pool per repo).
+// to:<path> only sets newBriefsDir — the collection subfolder where NEW briefs from
+// this run are filed (collections are folders, not walls). registerRoot (run by the
+// SKILL) records briefsRoot so the read side recurses and sees every collection.
+const newBriefsDir = resolveCollection(briefsRoot, arg("--to"));
 // Positional selectors: everything that isn't a flag or a flag's value.
 const VALUE_FLAGS = new Set(["--cwd", "--briefs-dir", "--to"]);
 const selectors = [];
@@ -102,7 +104,7 @@ const files = [...new Set(selectors.flatMap(expandSelector))].sort();
 let state = { version: 1, sources: {} };
 try {
 	state = JSON.parse(
-		readFileSync(join(briefsDir, ".clearvoid", "state.json"), "utf8"),
+		readFileSync(join(briefsRoot, ".clearvoid", "state.json"), "utf8"),
 	);
 	if (!state.sources) state.sources = {};
 } catch {
@@ -157,9 +159,9 @@ const inRepo = findRepoRoots(cwd) !== null;
 const registered = loadRoots()
 	.roots.map((r) => resolve(r))
 	.includes(briefsRoot);
-if (!existsSync(briefsDir) && !inRepo && !registered) {
+if (!existsSync(briefsRoot) && !inRepo && !registered) {
 	warnings.push(
-		`Destination ${briefsDir} does not exist yet and ${cwd} is not inside a git repo — ` +
+		`Destination ${briefsRoot} does not exist yet and ${cwd} is not inside a git repo — ` +
 			`compiling here seeds a NEW, unversioned briefs/ folder (no committed watermark, no diff review). ` +
 			`Re-run with --briefs-dir <repo>/briefs to land these briefs in a repo if that was not intended.`,
 	);
@@ -171,8 +173,9 @@ console.log(
 			source: "md",
 			cwd,
 			briefsRoot,
-			briefsDir,
+			newBriefsDir,
 			generatedAt: new Date().toISOString(),
+			briefs: loadBriefsIndex(briefsRoot),
 			queue,
 			upToDateCount: upToDate.length,
 			matched: files.length,

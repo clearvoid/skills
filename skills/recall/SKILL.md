@@ -1,20 +1,29 @@
 ---
-name: context
-description: Load the user's compiled briefs relevant to the current conversation — resolves the current repo's briefs plus every registered root (other repos), scans their frontmatter to build a selection list, and loads only the relevant briefs. Use when the user asks to load brief context, asks what their briefs say about something, or before strategy/research/direction work in a repo that has briefs.
+name: recall
+description: Load the user's compiled briefs relevant to the current conversation — resolves the current repo's briefs plus every registered root (other repos), scans their frontmatter to build a selection list, and loads only the relevant briefs. Also has a backlog mode that surfaces the follow-ups/actions tracked alongside the briefs. Use when the user asks to load brief context, asks what their briefs say about something, asks what's on the follow-up/action backlog or what to do/research next, or before strategy/research/direction work in a repo that has briefs.
 user-invocable: true
-argument-hint: "[topic to focus the selection, e.g. 'pricing decisions']"
+argument-hint: "[topic to focus the selection, e.g. 'pricing decisions'; or 'backlog'/'actions' to surface the follow-ups backlog]"
 allowed-tools: Read, Bash(node *), Glob
 ---
 
-# clearvoid-context
+# clearvoid-recall
 
 The read side of briefs: pull the user's compiled state into the conversation — selectively. Briefs are a per-session token cost; the job is to load the few that matter, not the library.
 
+## Modes
+
+- **Default — load briefs.** No directive, or a topic (`$ARGUMENTS`) that names a subject. Run the Process below.
+- **Backlog — surface follow-ups & actions.** When the directive is a backlog word (`backlog`, `actions`, `follow-ups`, `todo`, `what's next`, "what should I research/do next"), don't load briefs — surface the tracked backlog instead (see Backlog mode below). The backlog is the co-authored `briefs/.clearvoid/follow-ups.md` that `/clearvoid:compile` appends to: **Follow-ups** (research threads worth going deeper on) and **Actions** (things to do, often backed by a brief).
+
+### Backlog mode
+
+1. `node ${CLAUDE_SKILL_DIR}/scripts/resolveRoots.mjs --backlog` — returns, for the current repo and each in-scope root, that root's parsed `{ followUps, actions }` (raw bullet lines); `available` is out-of-scope roots as name + count only (same context-scope rules as the default mode).
+2. Surface the backlog grouped by root, Follow-ups then Actions, each item on its own line (keep the `[[brief]]` links and source/date tails so the user can act on them). If a topic accompanied the backlog word, filter to the matching items. Empty backlog → say so and point at `/clearvoid:compile` (it's what populates the backlog).
+3. **Read-only, same as default mode.** Never edit `follow-ups.md` from recall — items are added by compile and checked off by the user's own edits (deleting a line = done).
+
 ## Process
 
-1. **Resolve the roots and their briefs.**
-   `node ${CLAUDE_SKILL_DIR}/scripts/resolveRoots.mjs`
-   Returns `{ scope, current, others, available }`. `current` is the repo you're in: a line per brief (slug, title, summary, updated, `collection`) read straight from the files' frontmatter. `others` is the registered repos that the active **context scope** lets in — same per-brief shape. `available` is registered repos the scope left **out** (name + brief count only, no brief lines — out-of-scope briefs are never loaded into the surface). It walks each in-scope root recursively, so briefs nested in collection subfolders are included; `collection` is the brief's folder path relative to the briefs root (`""` for top-level, e.g. `yc-ai` or `ai/agents` for nested ones).
+1. **Resolve the roots and their briefs.** `node ${CLAUDE_SKILL_DIR}/scripts/resolveRoots.mjs` Returns `{ scope, current, others, available }`. `current` is the repo you're in: a line per brief (slug, title, summary, updated, `collection`) read straight from the files' frontmatter. `others` is the registered repos that the active **context scope** lets in — same per-brief shape. `available` is registered repos the scope left **out** (name + brief count only, no brief lines — out-of-scope briefs are never loaded into the surface). It walks each in-scope root recursively, so briefs nested in collection subfolders are included; `collection` is the brief's folder path relative to the briefs root (`""` for top-level, e.g. `yc-ai` or `ai/agents` for nested ones).
 
    **Scope** controls which *other* repos a session pulls in (the current repo's own briefs are always loaded). It defaults to `repo` — isolation, only this repo's briefs — and is widened by `~/.clearvoid/config.json` (`{ "context": { "scope": "all" } }`) or per-repo `briefs/.clearvoid/config.json` (`scope`, plus `include`/`exclude` lists naming other repos by display name like `brain` or by path). The script has already applied all this; `others` is the final in-scope set. You never read the config files yourself.
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // Register this repo's briefs/ in ~/.clearvoid/roots.json so the read side (the
-// context skill, the desktop workbench) can find it. Deterministic, idempotent,
+// recall skill, the desktop workbench) can find it. Deterministic, idempotent,
 // no LLM. Run once at the end of every compile.
 //
-// No index is generated: briefs are canonical and the context skill scans their
+// No index is generated: briefs are canonical and the recall skill scans their
 // frontmatter directly. This step only makes the root discoverable.
 //
 // Usage: node registerRoot.mjs --briefs-dir <path>

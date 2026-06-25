@@ -8,168 +8,79 @@ allowed-tools: Read, Write, Edit, Glob, Bash(node *)
 
 # clearvoid-compile
 
-Compile a corpus into **briefs**: markdown files in this repo's `briefs/` folder, each one
-a human-ownable *framing* (what the brief is for) plus a compiled *current view* (what the
-corpus says, through that framing). Everything happens locally; nothing leaves the machine
-— briefs only travel when the user commits them.
+Compile a corpus into **briefs**: markdown files in this repo's `briefs/` folder, each one a human-ownable *framing* (what the brief is for) plus a compiled *current view* (what the corpus says, through that framing). Everything happens locally; nothing leaves the machine — briefs only travel when the user commits them.
 
-The full file contract is `${CLAUDE_SKILL_DIR}/FORMAT.md` — read it on first run or
-whenever unsure about frontmatter, the state file, or folder conventions.
+The full file contract is `${CLAUDE_SKILL_DIR}/FORMAT.md` — read it on first run or whenever unsure about frontmatter, the state file, or folder conventions.
 
 ## Sources
 
-Compile is `source × destination`: a **source** enumerates and renders the material, a
-**destination** is where briefs land. The contract every source satisfies (the shared queue
-shape, the unit/watermark concepts, repo-bound vs free) is in
-`${CLAUDE_SKILL_DIR}/sources/README.md` — read it once. The source modules today:
+Compile is `source × destination`: a **source** enumerates and renders the material, a **destination** is where briefs land. The contract every source satisfies (the shared queue shape, the unit/watermark concepts, repo-bound vs free) is in `${CLAUDE_SKILL_DIR}/sources/README.md` — read it once. The source modules today:
 
-- **`claude-code`** (default) — Claude Code sessions belonging to this repo. Read
-  `${CLAUDE_SKILL_DIR}/sources/claude-code.md` before the first compile (scripts, session
-  encoding, JSONL quirks). Repo-bound: needs a git repo.
-- **`md`** — a plain markdown file, directory, or glob, selected with the `md:` prefix
-  (`md:/tmp/echo.md`). Read `${CLAUDE_SKILL_DIR}/sources/markdown.md` before the first
-  markdown compile. Free: writes `briefs/` wherever you run (or `--briefs-dir`).
-- **`url`** — any URL (a YouTube video, article, or tweet), selected with the `url:` prefix
-  (`url:https://www.youtube.com/watch?v=…`), several space-separated URLs, or a channel
-  (`url:channel:UC…`). Content is fetched from the hosted Clearvoid extract endpoint and
-  cached under the repo's `raw/`. Read `${CLAUDE_SKILL_DIR}/sources/url.md` before the first
-  url compile. Free.
+- **`claude-code`** (default) — Claude Code sessions belonging to this repo. Read `${CLAUDE_SKILL_DIR}/sources/claude-code.md` before the first compile (scripts, session encoding, JSONL quirks). Repo-bound: needs a git repo.
+- **`md`** — a plain markdown file, directory, or glob, selected with the `md:` prefix (`md:/tmp/echo.md`). Read `${CLAUDE_SKILL_DIR}/sources/markdown.md` before the first markdown compile. Free: writes `briefs/` wherever you run (or `--briefs-dir`).
+- **`url`** — any URL (a YouTube video, article, or tweet), selected with the `url:` prefix (`url:https://www.youtube.com/watch?v=…`), several space-separated URLs, or a channel (`url:channel:UC…`). Content is fetched from the hosted Clearvoid extract endpoint and cached under the repo's `raw/`. Read `${CLAUDE_SKILL_DIR}/sources/url.md` before the first url compile. Free.
 
-**Source and destination selection are mechanical, never inferred from prose.** Scan only
-the directive's leading whitespace-delimited tokens:
+**Source and destination selection are mechanical, never inferred from prose.** Scan only the directive's leading whitespace-delimited tokens:
 
-- **Source:** if the first token matches `<source>:` for a module above (`md:`, `url:`), it
-  selects the source and the rest of that token is its argument (the path/glob/URL, or for
-  `url:` several space-separated URLs). Otherwise the source is `claude-code`.
-- **Destination:** a `to:<path>` token (a leading token, in any order with the source token)
-  selects the destination **collection**: briefs land in `briefs/<path>/` (any depth). No
-  `to:` writes to `briefs/` top-level. Pass it through to the list and `render` scripts as
-  `--to <path>`.
+- **Source:** if the first token matches `<source>:` for a module above (`md:`, `url:`), it selects the source and the rest of that token is its argument (the path/glob/URL, or for `url:` several space-separated URLs). **Bare-URL shorthand:** if no leading token carries a `<source>:` prefix and the leading run of tokens (after any `to:` token) are all `http(s)://` URLs, the source is `url` with those URLs as its arguments — `compile https://www.youtube.com/watch?v=…` needs no prefix. This stays a mechanical token test, not prose inference: the disambiguator is leading position. The moment the first non-`to:` token isn't an `http(s)://` URL, the shorthand doesn't fire and the source is `claude-code` — a URL appearing later is then just emphasis. Channels (`url:channel:UC…`) and bare filesystem paths still need their explicit prefix. Otherwise the source is `claude-code`.
+- **Destination:** a `to:<path>` token (a leading token, in any order with the source token) selects the destination **collection** — the subfolder where *new* briefs from this run are filed (`briefs/<path>/`, any depth). No `to:` files new briefs at the `briefs/` top level. Collections are folders, not walls: orientation, the queue, and the watermark are always repo-global (one pool per repo), and a run may update an existing brief in *any* collection; `to:` only sets where freshly-created briefs land. Pass it to the `list` script as `--to <path>` (the `render` scripts don't take it — they watermark the root).
 - Everything after the consumed selector tokens is **emphasis** (it steers attention only).
 
-A prefix naming a source with no module yet (`chatgpt:`) gets "that doesn't exist yet",
-never reinterpreted. A bare path with no prefix is emphasis, not a source.
+A prefix naming a source with no module yet (`chatgpt:`) gets "that doesn't exist yet", never reinterpreted. A bare filesystem path with no prefix is emphasis, not a source — the one exception is the bare-URL shorthand above, and only for `http(s)://` tokens in leading position.
 
 ## Directive
 
-Anything typed after the skill name is a free-text directive. After the optional leading
-`<source>:` selector token is consumed (see Sources), the **rest is emphasis** — it steers
-**attention**, nothing else. What it never does is scope *which units* compile: a run always
-processes the full queue, oldest first — "everything since the last compile" is the
-whole contract. (Unit scoping was considered and rejected: with an empty queue it's a
-no-op, and with a stale queue it folds material out of chronological order, letting
-older units later overwrite newer positions.)
+Anything typed after the skill name is a free-text directive. After the optional leading `<source>:` selector token is consumed (see Sources), the **rest is emphasis** — it steers **attention**, nothing else. What it never does is scope *which units* compile: a run always processes the full queue, oldest first — "everything since the last compile" is the whole contract. (Unit scoping was considered and rejected: with an empty queue it's a no-op, and with a stale queue it folds material out of chronological order, letting older units later overwrite newer positions.)
 
-Emphasis steers what to attend to within that sweep — "pay special attention to the
-agency-strategy discussion", "especially this session" (the queue entry flagged
-`current`). Read the named thread or session with extra care and lower the bar for
-promoting it to its own brief. Two guardrails:
+Emphasis steers what to attend to within that sweep — "pay special attention to the agency-strategy discussion", "especially this session" (the queue entry flagged `current`). Read the named thread or session with extra care and lower the bar for promoting it to its own brief. Two guardrails:
 
-- Emphasis never fabricates: if the material isn't actually in the sessions, report that
-  rather than writing a thin brief to satisfy the directive.
-- Emphasis never overwrites an existing framing. On conflict, obey the framing as written
-  and flag the tension in the report. Emphasis steers what the body attends to, never the
-  framing.
+- Emphasis never fabricates: if the material isn't actually in the sessions, report that rather than writing a thin brief to satisfy the directive.
+- Emphasis never overwrites an existing framing. On conflict, obey the framing as written and flag the tension in the report. Emphasis steers what the body attends to, never the framing.
 
-If an emphasized thread does earn a new brief, seed its framing from the directive's own
-language: the one-off instruction becoming durable steering is the framing mechanism
-working as intended.
+If an emphasized thread does earn a new brief, seed its framing from the directive's own language: the one-off instruction becoming durable steering is the framing mechanism working as intended.
 
-The conversation stays live during a run — treat mid-run steering ("skip that one",
-"that belongs in the positioning brief") as directive, not interruption.
+The conversation stays live during a run — treat mid-run steering ("skip that one", "that belongs in the positioning brief") as directive, not interruption.
 
 ## Process
 
-1. **Orient.** Read every existing brief in the **write dir** (the target collection — the
-   list step's `briefsDir`, which is `briefs/` itself when there is no `to:`; a `to:`
-   collection scopes orientation to that subfolder, not the whole tree). These framings are
-   the lens for everything you read next. If the write dir doesn't exist yet, you're
-   cold-starting that collection: you'll be proposing its first slate of briefs and seeding
-   their framings yourself.
+1. **Orient — the framing+summary index is handed to you (don't grep, don't sample).** The `list` step (step 2) returns a `briefs[]` array: *every* brief in the repo across *every* collection, each with its `title`, `framing`, `summary`, `collection`, and `updated`. That array IS your orientation index, and it is delivered deterministically — it is in your context the moment you read the list output, with no per-file reads and no `grep`/`Glob` to assemble it. **Never substitute a keyword search for it.** Grep can't be the index because the connection you need is usually phrased in the brief's vocabulary, not the source's — a video about "AI services companies" belongs next to a brief framed as "the agency play," and no keyword bridges that; only having every framing in context does. Orientation is repo-global regardless of `to:` (collections are folders, not walls), so material compiled into one collection can and should cross-link briefs in another. Read the whole `briefs[]` array before you cluster, then read the **full body** of any brief the queued material plausibly touches. If `briefs[]` is empty, you're cold-starting this repo: you'll be proposing its first slate of briefs and seeding their framings yourself.
 
-2. **Get the queue** from the resolved source's list script (append `--to <path>` when the
-   directive named a `to:` collection):
+   These framings+summaries are both the **lens** (what to attend to) and the **connection surface** (where new material attaches). Watch for the promotion signal: when queued material clearly belongs to a **recurring thread that no framing/summary names** — one that lives only inside other briefs' bodies — that absence means the thread has outgrown being a tenant and wants **promotion to its own brief** (the other briefs then cross-link to it), not a fresh single-source brief. A brand-new brief with zero `[[wikilinks]]` into a populated repo is a smell, not a finish.
+
+2. **Get the queue** from the resolved source's list script (append `--to <path>` when the directive named a `to:` collection):
    - claude-code: `node ${CLAUDE_SKILL_DIR}/scripts/listSessions.mjs [--to <path>]`
    - md: `node ${CLAUDE_SKILL_DIR}/scripts/listMarkdown.mjs <selector> --cwd . [--to <path>]`
-   - url: `node ${CLAUDE_SKILL_DIR}/scripts/listUrl.mjs <url-or-channel…> --cwd . [--to <path>]`
-   They return the units with new content, oldest first, with titles for triage, and two
-   destination paths: **`briefsDir`** (the write dir — the collection where briefs and the
-   watermark live; use it for steps 1 and 5–7) and **`briefsRoot`** (the repo's `briefs/`;
-   use it for step 8's registration). The url source also returns `rawDir` (the raw-content
-   cache); pass it to `renderUrl`. **Surface any `errors`/`warnings` to the user** (bad
-   selectors, the "seeding a new unversioned briefs/" warning, the url channel-feed 15-video
-   cap). For claude-code: the entry flagged `current` is the session this compile was invoked
-   from — always compile it; skip *other* entries flagged `activeRecently` (parallel sessions
-   likely mid-flight). md/url have no `current`/`activeRecently` — compile the whole queue.
+   - url: `node ${CLAUDE_SKILL_DIR}/scripts/listUrl.mjs <url-or-channel…> --cwd . [--to <path>]` They return the units with new content, oldest first, with titles for triage; the **`briefs[]`** orientation index (step 1 — every brief's framing+summary across all collections, your clustering lens); and two destination paths: **`briefsRoot`** (the repo's `briefs/` — the one pool: orientation, the watermark, render's `--briefs-dir`, and registration all key off it; use it for steps 5, 7, 8) and **`newBriefsDir`** (the `to:` collection subfolder where *new* briefs from this run are filed; use it for step 6 creates — no `to:` → it equals `briefsRoot`). The url source also returns `rawDir` (the raw-content cache); pass it to `renderUrl`. **Surface any `errors`/`warnings` to the user** (bad selectors, the "seeding a new unversioned briefs/" warning, the url channel-feed 15-video cap). For claude-code: the entry flagged `current` is the session this compile was invoked from — always compile it; skip *other* entries flagged `activeRecently` (parallel sessions likely mid-flight). md/url have no `current`/`activeRecently` — compile the whole queue.
 
-3. **State the plan, don't block on it.** Report scope to the user — unit count (sessions
-   or files), date span where applicable, and total substrate size from the queue's
-   `newTokens` sum (NEVER from `bytes`: raw substrate overstates 30–300×) — and the window
-   plan. Proceed immediately; the user can interrupt. Never wait for confirmation
-   (non-interactive runs hang on questions). Report length only from what a script gives
-   you: never estimate a video's duration or "minutes into the transcript" from token/byte
-   counts (that guess runs 3–4× off). For a url transcript, the only length is the
-   `transcript runs to <stamp>` figure `renderUrl` derives from the transcript's own
-   timestamps — quote it or say nothing.
+3. **State the plan, don't block on it.** Report scope to the user — unit count (sessions or files), date span where applicable, and total substrate size from the queue's `newTokens` sum (NEVER from `bytes`: raw substrate overstates 30–300×) — and the window plan. Proceed immediately; the user can interrupt. Never wait for confirmation (non-interactive runs hang on questions). Report length only from what a script gives you: never estimate a video's duration or "minutes into the transcript" from token/byte counts (that guess runs 3–4× off). For a url transcript, the only length is the `transcript runs to <stamp>` figure `renderUrl` derives from the transcript's own timestamps — quote it or say nothing.
 
-4. **Pre-scan.** Read the queue's `title`/`firstMessage` fields across the whole backlog
-   to form a rough map of recurring threads before walking any session.
+4. **Pre-scan.** Read the queue's `title`/`firstMessage` fields across the whole backlog to form a rough map of recurring threads before walking any session.
 
-5. **Process oldest first, in windows.** For claude-code, group queue entries by ISO week
-   of `startedAt`; for md (no chronology) take the queue's path order. For each window:
+5. **Process oldest first, in windows.** For claude-code, group queue entries by ISO week of `startedAt`; for md (no chronology) take the queue's path order. For each window:
    - Re-read any briefs touched since the window started (your own writes accumulate).
-   - Render each unit with the source's render script — **always pass `--briefs-dir
-     <briefsDir>`**, which records the unit's watermark as you read it (this is what makes
-     the watermark deterministic; step 7 commits it):
-     - claude-code: `node ${CLAUDE_SKILL_DIR}/scripts/renderSession.mjs <id> --from-line <compiledLines> --briefs-dir <briefsDir>`
-     - md: `node ${CLAUDE_SKILL_DIR}/scripts/renderMarkdown.mjs <id> --briefs-dir <briefsDir>` (whole-file, no offset)
-     - url: `node ${CLAUDE_SKILL_DIR}/scripts/renderUrl.mjs <id> --briefs-dir <briefsDir> --raw-dir <rawDir>` (fetches via the extract endpoint on a cache miss, then caches to `rawDir`)
-   - Entries with `newTokens: 0` (only chrome/meta in the new lines): still render them
-     (they produce no substrate but the render records their watermark, so they don't
-     re-queue). Don't write a brief for them.
-   - Cluster as you read: does this material reinforce an existing brief's framing, or is
-     it a genuinely new thread that deserves a new brief?
+   - Render each unit with the source's render script — **always pass `--briefs-dir <briefsRoot>`** (the repo root, where the one-per-repo watermark lives), which records the unit's watermark as you read it (this is what makes the watermark deterministic; step 7 commits it):
+     - claude-code: `node ${CLAUDE_SKILL_DIR}/scripts/renderSession.mjs <id> --from-line <compiledLines> --briefs-dir <briefsRoot>`
+     - md: `node ${CLAUDE_SKILL_DIR}/scripts/renderMarkdown.mjs <id> --briefs-dir <briefsRoot>` (whole-file, no offset)
+     - url: `node ${CLAUDE_SKILL_DIR}/scripts/renderUrl.mjs <id> --briefs-dir <briefsRoot> --raw-dir <rawDir>` (fetches via the extract endpoint on a cache miss, then caches to `rawDir`)
+   - Entries with `newTokens: 0` (only chrome/meta in the new lines): still render them (they produce no substrate but the render records their watermark, so they don't re-queue). Don't write a brief for them.
+   - Cluster as you read: does this material reinforce an existing brief's framing, or is it a genuinely new thread that deserves a new brief?
 
-6. **Write briefs** (per FORMAT.md):
-   - **Update**: integrate new material into the body — reconcile, supersede, don't
-     append-only. Add the unit's id (the session id or the `md:<path>`) to `sources:`,
-     bump `updated:`, and refresh `summary:` (one line, the current view distilled — the
-     context skill selects by it) whenever the position moved. If the brief carries a
-     `## Log` (or the new material warrants starting one), append a dated entry — newest
-     last, a decision/material view-change plus its verbatim source quote(s) — while keeping
-     the body above it a tight snapshot. Don't restate the body in the Log.
-   - **Create**: kebab-case slug, a seeded framing, `summary:` one-liner, compiled body.
-     Write the seeded framing with care: compile never revises a framing after creation,
-     so this first pass is the only one it gets. New briefs need a reason to exist, a
-     thread that recurs or clearly will. On a cold start, prefer fewer, denser briefs: one
-     per genuinely distinct thread, never one per session.
-   - **Framing discipline (the load-bearing rule):** compile seeds a framing once, on
-     create, and never rewrites a framing on a later run. An existing framing is an
-     instruction to you: obey it, never edit it; directives and emphasis may steer the body
-     but never overwrite the framing. On conflict, flag the tension in the report. Content
-     lives under the framing; the framing belongs to the human.
+6. **Write briefs** (per FORMAT.md). New briefs are filed under **`newBriefsDir`** (the `to:` collection); updates happen **in place**, in whatever collection the brief already lives — a run compiled `to:research` can and should update or cross-link a top-level brief, because it's all one pool. Express cross-collection relationships as `[[slug]]` wikilinks (readers derive the back-edges; don't write them by hand).
+   - **Update**: integrate new material into the body — reconcile, supersede, don't append-only. Add the unit's id (the session id or the `md:<path>`) to `sources:`, bump `updated:`, and refresh `summary:` (one line, the current view distilled — the recall skill selects by it) whenever the position moved. If the brief carries a `## Log` (or the new material warrants starting one), append a dated entry — newest last, a decision/material view-change plus its verbatim source quote(s) — while keeping the body above it a tight snapshot. Don't restate the body in the Log.
+   - **Create**: kebab-case slug, a seeded framing, `summary:` one-liner, compiled body. Write the seeded framing with care: it's the human's anchor from the moment it exists, and later runs only refine it conservatively (see Framing discipline below). New briefs need a reason to exist, a thread that recurs or clearly will. On a cold start, prefer fewer, denser briefs: one per genuinely distinct thread, never one per session. **Never mint a brief that is just a filtered re-summary of one source** — a brief is a *framing for the user* that synthesizes across sources; the single-source reading view is the per-source summary file (url sources, below), not a brief. If a source only reinforces an existing position, update that brief; if it surfaces a thread no framing names, promote the thread (step 1), don't wrap the source in a brief.
+   - **Framing discipline (the load-bearing rule):** compile seeds a framing on create and may *refine* an existing framing on a later run when the compiled view has clearly outgrown the original lens — but the framing is the human's anchor, so editing it is high-friction: lightest touch (refine and extend, don't wholesale-reword), preserve the original intent, and **call out every framing change explicitly in your report** (which brief, what changed, why). Briefs live in git and you never commit, so a framing change rides as a reviewable diff hunk — the diff is the human's review pass, your report is what points them at it. What never moves a framing is a single run's directive/emphasis: emphasis steers what the body attends to; a framing evolves only because the accumulated material outgrew it. On conflict between emphasis and framing, obey the framing and flag the tension. Content lives under the framing; the framing belongs to the human.
    - Cross-link related briefs with `[[slug]]` wikilinks.
+   - **Per-source summary (url sources only).** For each `url` unit you rendered, also write a detailed breakdown of that one source to the `summary-target:` path `renderUrl` printed. This is **not** a brief and **not** cross-source synthesis: it's fidelity to THIS source — its content, in order — the reading view the desktop Links tab shows beside the citing briefs. Scale it to the source's length, using the `transcript runs to <stamp>` runtime (or the token size) `renderUrl` reported as the proportionality signal: a short clip gets a few tight paragraphs; a 45-minute talk gets a sectioned breakdown with several paragraphs per major section. Compress, never pad to hit a length; cap a very long source rather than re-transcribing it. For video, anchor sections with the transcript's `[MM:SS]` timestamps. Frontmatter: `summary_of: <canonical-url>`, `title:`, `generated: <today>`. Write it with the Write tool to the exact `summary-target` path; never edit the verbatim `raw/<key>.md`.
 
-7. **Finalize the watermark.** `node ${CLAUDE_SKILL_DIR}/scripts/finalizeState.mjs --briefs-dir <briefsDir>`
-   — one call, after every brief is written. Each render in step 5 already recorded its
-   unit's watermark (you passed `--briefs-dir`); this commits all of them into
-   `state.json` and clears the pending file. There is no per-unit bookkeeping to remember:
-   if you rendered a unit, it gets watermarked. A crash before this step commits nothing,
-   so the queue simply re-runs next time — bounded re-work, never un-watermarked sessions
-   that silently re-queue forever.
+7. **Finalize the watermark.** `node ${CLAUDE_SKILL_DIR}/scripts/finalizeState.mjs --briefs-dir <briefsRoot>` — one call, after every brief is written, against the repo root (the watermark is one per repo). Each render in step 5 already recorded its unit's watermark (you passed the same `--briefs-dir <briefsRoot>`); this commits all of them into the root `state.json` and clears the pending file. There is no per-unit bookkeeping to remember: if you rendered a unit, it gets watermarked. A crash before this step commits nothing, so the queue simply re-runs next time — bounded re-work, never un-watermarked sessions that silently re-queue forever.
 
-8. **Register the root.** Run
-   `node ${CLAUDE_SKILL_DIR}/scripts/registerRoot.mjs --briefs-dir <briefsRoot>` —
-   register the repo's `briefs/` **root** (`briefsRoot`), never the `to:` collection
-   subfolder: the read side recurses under the root and finds every collection, so one
-   registry entry per repo covers them all. Deterministic; adds it to
-   `~/.clearvoid/roots.json` so the context skill and the workbench can find it. No index is
-   built and no `README.md` is written: briefs are canonical and the read side scans their
-   frontmatter directly.
+8. **Register the root.** Run `node ${CLAUDE_SKILL_DIR}/scripts/registerRoot.mjs --briefs-dir <briefsRoot>` — register the repo's `briefs/` **root** (`briefsRoot`), never the `to:` collection subfolder: the read side recurses under the root and finds every collection, so one registry entry per repo covers them all. Deterministic; adds it to `~/.clearvoid/roots.json` so the recall skill and the workbench can find it. No index is built and no `README.md` is written: briefs are canonical and the read side scans their frontmatter directly.
 
-9. **Report.** Sessions compiled, briefs created/updated (with one-line whats), threads
-   you noticed but didn't promote, and a reminder that briefs are theirs to edit — fixing
-   a framing is how the next compile gets smarter.
+9. **Capture follow-ups & actions.** The threads you noticed but didn't promote, the gaps a brief leaves open, and the product use-cases a source implies are exactly what evaporates when they live only in the chat report — persist the grounded ones to the repo's backlog, `<briefsRoot>/.clearvoid/follow-ups.md` (NOT a brief; the read side surfaces it in recall's backlog mode). It's a co-authored file with two sections:
+   - **`## Follow-ups`** — research threads worth going deeper on, usually a future compile ("dream cycles in OpenClaw", "skills management at scale").
+   - **`## Actions`** — things to *do*, often backed by a brief ("build the onboarding use-case (backing: [[brief]])", "we need our own 2-sentence pitch"). Read the existing file first; **append** grounded items, **dedupe** against what's there, and **never delete or rewrite a human-authored line** (same human-ownership rule as framings — the human edits and deletes; deleting a line = done). Each entry is a bullet with a short metadata tail: `(src: <source-id> · <date> · [[brief]])`, or `(backing: [[brief]] · …)` for an action. **Discipline: an entry is grounded or it isn't written** — a concrete next source, a thread the source actually raised, or a specific implication; never generic "explore X further" filler. No grounded items this run → write nothing (a valid outcome). If the file doesn't exist yet and you have grounded items, create it with `version: 1` frontmatter and the two section headings.
+
+10. **Report.** Sessions compiled, briefs created/updated (with one-line whats), threads you noticed but didn't promote, any follow-ups/actions you added to the backlog, **any framing you refined (call these out explicitly — old → new and why, so the human can spot the hunk in the diff)**, and a reminder that briefs are theirs to edit — fixing a framing is how the next compile gets smarter.
 
 ## Boundaries
 

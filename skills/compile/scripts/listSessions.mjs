@@ -13,6 +13,7 @@ import {
 	cleanContentForTitle,
 	encodeProjectPath,
 	findRepoRoots,
+	loadBriefsIndex,
 	resolveCollection,
 	nonEmptyLines,
 	parseSessionLines,
@@ -57,10 +58,12 @@ if (!roots) {
 	process.exit(1);
 }
 const { checkoutRoot, matchRoot } = roots;
-// briefsRoot is the repo's briefs/ (what registerRoot records); a `to:<path>`
-// directive narrows the write dir to a collection subfolder. No `to:` → they're equal.
+// briefsRoot is the repo's briefs/ — the one pool. Orientation, the queue, and the
+// watermark all key off it. A `to:<path>` directive only sets newBriefsDir, the
+// collection subfolder where NEW briefs from this run are filed (collections are
+// folders, not walls). No `to:` → newBriefsDir is the root.
 const briefsRoot = join(checkoutRoot, "briefs");
-const briefsDir = resolveCollection(briefsRoot, arg("--to"));
+const newBriefsDir = resolveCollection(briefsRoot, arg("--to"));
 const encodedRoot = encodeProjectPath(matchRoot);
 // On macOS, /private/var is the realpath for the /var symlink. Claude Code may encode
 // the session using either form depending on how it resolved the cwd at creation time.
@@ -69,8 +72,8 @@ const altEncodedRoot = matchRoot.startsWith("/private/")
 	: null;
 const projectsDir = claudeProjectsDir();
 
-const state = loadState(briefsDir);
-const ignoreGlobs = loadIgnoreGlobs(briefsDir);
+const state = loadState(briefsRoot);
+const ignoreGlobs = loadIgnoreGlobs(briefsRoot);
 const ignoredMatch = (fullId, bareId) =>
 	ignoreGlobs.some((re) => re.test(fullId) || re.test(bareId));
 
@@ -194,8 +197,9 @@ console.log(
 			checkoutRoot,
 			encodedRoot,
 			briefsRoot,
-			briefsDir,
+			newBriefsDir,
 			generatedAt: new Date(now).toISOString(),
+			briefs: loadBriefsIndex(briefsRoot),
 			queue,
 			upToDateCount: upToDate.length,
 			ignoredCount: ignored.length,
