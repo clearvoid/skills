@@ -43,6 +43,21 @@ Loading briefs back into a conversation is the `recall` skill: `/clearvoid:recal
 - Nothing leaves your machine unless you commit it. Which also means a team shares one compiled view through ordinary git: each person compiles their own sessions locally, and the diff is the review.
 - Writes are confined to `briefs/`. Deleting that folder is a complete reset.
 
+## Installing without a marketplace (locked-down machines)
+
+If you can't add a remote plugin marketplace — a managed work machine, a security team that flags installs — you don't need one. The skill is plain files (Node with no npm packages, plus git), and nothing contacts a network *except* the optional `url:` source, which only runs when you explicitly pass a `url:`. Compiling your own sessions never leaves the machine. Two ways to run it with no remote install:
+
+- **Local plugin install.** Download this repo as a zip (the green **Code → Download ZIP**, or a tagged release) and unzip it anywhere. Then, inside Claude Code, point the marketplace at the local folder instead of a remote:
+
+  ```
+  /plugin marketplace add /path/to/clearvoid-skills
+  /plugin install clearvoid@clearvoid
+  ```
+
+  Both commands read from the unzipped folder — no remote fetch. Then use `/clearvoid:compile` and `/clearvoid:recall` as normal.
+
+- **By reference, no install at all.** Drop the unzipped folder into your repo and just tell Claude to follow the skill — e.g. *"follow `skills/compile/SKILL.md` and compile this repo's sessions into briefs"* (and `skills/recall/SKILL.md` to load them). The skill files mention `${CLAUDE_SKILL_DIR}`: outside the plugin harness that's simply the folder the `SKILL.md` lives in, so read the script paths relative to that.
+
 ## Scope
 
 **Today:** Claude Code sessions, per repo (the sessions whose working directory is the repo you run the skill in — `.claude/worktrees` included).
