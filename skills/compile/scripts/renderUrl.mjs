@@ -134,6 +134,11 @@ function frontmatter(meta) {
 	const author = meta.author_name ?? meta.author_username;
 	add("author", author);
 	add("channel_name", meta.channel_name);
+	// Stable YouTube channel id — the desktop Links facet bar groups channels by
+	// it (survives renames / display-name collisions), falling back to
+	// channel_name. Null for non-YouTube sources and for endpoints that predate
+	// it; an existing cache file just keeps grouping by name.
+	add("channel_id", meta.channel_id);
 	add("published_at", meta.published_at);
 	// Poster frame for the desktop Links tab: YouTube thumbnail / web og:image,
 	// both surfaced by the extract endpoint as og_image_url.
@@ -161,6 +166,7 @@ if (fromCache) {
 		author_name: result.author_name,
 		author_username: result.author_username,
 		channel_name: result.channel_name,
+		channel_id: result.channel_id,
 		og_image_url: result.og_image_url,
 		published_at: result.published_at,
 	};
