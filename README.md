@@ -26,9 +26,9 @@ Each compile is incremental (a content-free watermark in `briefs/.clearvoid/stat
 
 The full file contract lives in [skills/compile/FORMAT.md](skills/compile/FORMAT.md).
 
-## Selecting briefs (no generated index)
+## Recall loads only what's relevant
 
-There's no generated index file — the brief files are the only artifact compile writes. When the read-side `recall` skill pulls briefs into a conversation it works by progressive disclosure: it scans each brief's frontmatter (title, one-line summary, last updated) on demand, picks the briefs relevant to the conversation, and loads only those. The `summary:` line carries that selection, which is why every brief has one. The scan reads the files directly, so the selection surface is always current — nothing to regenerate, nothing to fall out of date.
+When you pull briefs back into a conversation with `recall`, it doesn't dump the whole library. It reads each brief's frontmatter (title, one-line `summary:`, last updated), picks the few relevant to what you're working on, and loads only those — that's what the `summary:` line is for, and why every brief has one. It reads the brief files directly each time, so the selection is always current: there's nothing to rebuild or keep in sync.
 
 ## Briefs across projects
 
@@ -58,11 +58,27 @@ If you can't add a remote plugin marketplace — a managed work machine, a secur
 
 - **By reference, no install at all.** Drop the unzipped folder into your repo and just tell Claude to follow the skill — e.g. *"follow `skills/compile/SKILL.md` and compile this repo's sessions into briefs"* (and `skills/recall/SKILL.md` to load them). The skill files mention `${CLAUDE_SKILL_DIR}`: outside the plugin harness that's simply the folder the `SKILL.md` lives in, so read the script paths relative to that.
 
+## Compiling URLs (articles, tweets, YouTube)
+
+Briefs don't have to come from your sessions. Point compile at a URL with the `url:` prefix and it becomes clean markdown substrate — then compiles into briefs exactly like a session:
+
+```
+/clearvoid:compile url:https://www.youtube.com/watch?v=<id>
+/clearvoid:compile url:https://example.com/some-article
+/clearvoid:compile url:https://x.com/<user>/status/<id>
+```
+
+- **What it handles:** articles, tweets/threads, and YouTube videos (the transcript). Pass several at once, space-separated (each becomes its own source), and a leading `https://…` works even without the `url:` prefix.
+- **YouTube channels:** `url:channel:<UC…>` or a `https://youtube.com/@handle` URL fans out to the channel's ~15 most recent videos (via its public RSS feed — re-run later to pick up new uploads).
+- **Where it lands:** run it in the repo where you want the briefs. Each URL is fetched once and cached locally under `raw/`, and produces both a brief (synthesis across your sources) and a per-source reading summary (`raw/<key>.summary.md`, faithful to that one source in order). Cited URLs appear in each brief's `sources:` like any other provenance, and a once-compiled URL won't re-compile on its own (re-running a changed page is an explicit re-run).
+
+**This is the one source that uses the network.** Compiling your sessions or local files is fully offline; `url:` sends *only the URL you pass* to a hosted extractor (free and open, with a usage cap + per-IP rate limit as the guardrails) which returns the clean markdown. Your other content never touches it, and nothing runs unless you actually type a `url:`. To point it at your own deployment, set `CLEARVOID_EXTRACT_URL` (and `CLEARVOID_EXTRACT_TOKEN` if it's locked down).
+
 ## Scope
 
-**Today:** Claude Code sessions, per repo (the sessions whose working directory is the repo you run the skill in — `.claude/worktrees` included).
+**Today:** Claude Code sessions (per repo — the sessions whose working directory is the repo you run the skill in, `.claude/worktrees` included), local markdown files or folders (`md:<path>`), and any URL — article, tweet, or YouTube video (`url:<url>`).
 
-**Next:** more sources for the same skill and the same files — ChatGPT exports, plain document folders — and a cross-project personal root. Source modules land under [skills/compile/sources/](skills/compile/sources/).
+**Next:** more sources for the same skill and the same files — ChatGPT exports — and a cross-project personal root. Source modules land under [skills/compile/sources/](skills/compile/sources/).
 
 The optional desktop workbench (navigate briefs, edit framings, trace provenance) lives at [clearvoid.ai](https://clearvoid.ai). The skill doesn't need it.
 
