@@ -60,11 +60,11 @@ function cacheKey(u) {
 
 const key = cacheKey(canonical);
 const cachePath = join(rawDir, key);
-// Per-source detailed summary lives in a sibling of the verbatim cache:
-// raw/<key>.summary.md. The agent writes it (it's LLM output); this script only
+// Per-source report lives in a sibling of the verbatim cache:
+// raw/<key>.report.md. The agent writes it (it's LLM output); this script only
 // names the target so key derivation stays in one place. Verbatim raw stays a
-// pure, byte-faithful, script-managed cache — the summary never lands in it.
-const summaryPath = join(rawDir, key.replace(/\.md$/, ".summary.md"));
+// pure, byte-faithful, script-managed cache — the report never lands in it.
+const reportPath = join(rawDir, key.replace(/\.md$/, ".report.md"));
 
 function sleep(ms) {
 	return new Promise((r) => setTimeout(r, ms));
@@ -237,8 +237,8 @@ if (fromCache) {
 		].join("\n"),
 	);
 }
-// Machine-readable target for the per-source detailed summary the agent writes
+// Machine-readable target for the per-source report the agent writes
 // (SKILL.md step 6, url sources only). Naming it here keeps the cache-key logic
-// in one place; the agent Writes the breakdown to this path.
-console.log(`summary-target: ${summaryPath}`);
+// in one place; the agent Writes the report to this path.
+console.log(`report-target: ${reportPath}`);
 console.log(`\n${body}`);

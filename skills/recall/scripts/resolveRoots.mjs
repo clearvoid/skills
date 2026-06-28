@@ -12,7 +12,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import {
 	canonicalRoot,
 	findRepoRoots,
-	loadFollowups,
+	loadNextSteps,
 	loadRoots,
 	matchesRootEntry,
 	readBriefFrontmatter,
@@ -36,13 +36,29 @@ const registry = loadRoots();
 // folder relative to the root is its collection ("" = top-level).
 const isBrief = (p) => p.endsWith(".md") && basename(p) !== "README.md";
 
+// How many leading lines form a brief's CURRENT VIEW — everything above the
+// trailing `## Log` history (matched leniently as `^## Log\b`, also catching
+// `## Log & evolution …`); null when there is no log. Recall passes this straight
+// to Read as a `limit` to load the current view and skip the log, which bloats
+// context and confuses the model with superseded loops/turns.
+function currentViewLineCount(text) {
+	const lines = text.split("\n");
+	for (let i = 0; i < lines.length; i++) {
+		// Heading at 0-based index i (1-based line i+1): the i lines above it
+		// (1-based 1..i) are the current view, so Read `limit: i` excludes the log.
+		if (/^## Log\b/.test(lines[i])) return i;
+	}
+	return null;
+}
+
 function describe(briefsDir, kind) {
 	const dir = resolve(briefsDir);
 	const briefs = [];
 	for (const file of walk(dir, isBrief, [])) {
-		let fm;
+		let content, fm;
 		try {
-			fm = readBriefFrontmatter(readFileSync(file, "utf8"));
+			content = readFileSync(file, "utf8");
+			fm = readBriefFrontmatter(content);
 		} catch {
 			continue;
 		}
@@ -58,6 +74,10 @@ function describe(briefsDir, kind) {
 			title: fm.title,
 			summary,
 			updated: fm.updated ?? "",
+			// anchor: load-bearing brief recall always loads (in full) and weights
+			// first. currentViewLines: Read `limit` so the `## Log` history isn't loaded.
+			anchor: fm.anchor ?? false,
+			currentViewLines: currentViewLineCount(content),
 		});
 	}
 	briefs.sort(
@@ -116,10 +136,10 @@ const selected = [];
 const available = [];
 for (const r of otherRoots) (inScope(r) ? selected : available).push(r);
 
-// Backlog mode (recall's `--backlog`): surface each in-scope root's follow-ups /
-// actions backlog (briefs/.clearvoid/follow-ups.md) instead of the brief lines.
-// Same scope rules — the current repo plus whatever context scope lets in; out-of-
-// scope roots stay name+count only.
+// Backlog mode (recall's `--backlog`): surface each in-scope root's next-steps
+// backlog — the `## Next steps` of every per-source report (raw/*.report.md),
+// grouped by source — instead of the brief lines. Same scope rules: the current
+// repo plus whatever context scope lets in; out-of-scope roots stay name+count only.
 if (process.argv.includes("--backlog")) {
 	const describeBacklog = (briefsDir, kind) => {
 		const dir = resolve(briefsDir);
@@ -128,7 +148,7 @@ if (process.argv.includes("--backlog")) {
 			name: rootDisplayName(dir),
 			briefsDir: dir,
 			exists: existsSync(dir),
-			...loadFollowups(dir),
+			...loadNextSteps(dir),
 		};
 	};
 	console.log(

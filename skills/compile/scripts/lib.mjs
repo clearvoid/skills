@@ -562,6 +562,9 @@ export function readBriefFrontmatter(text) {
 		const inline = head.match(/^framing:\s*(.+)$/m);
 		if (inline) fm.framing = inline[1].trim();
 	}
+	// anchor: true marks a load-bearing brief recall always loads (in full) and
+	// weights first; compile preserves it but never authors it. Boolean.
+	fm.anchor = /^anchor:\s*true\s*$/m.test(head);
 	return fm;
 }
 
@@ -644,45 +647,81 @@ export function progressPath(briefsDir) {
 	return join(briefsDir, ".clearvoid", "progress.json");
 }
 
-// ── Follow-ups / Actions backlog: briefs/.clearvoid/follow-ups.md ────────────
-// A co-authored, repo-level backlog that lives beside the watermark (in
-// .clearvoid/ so the recursive brief reader never mistakes it for a brief). NOT a
-// brief: compile appends grounded items (research follow-ups + product actions) it
-// would otherwise only mention in the chat report, deduping against what's there and
-// never rewriting a human-authored line; the human edits and deletes freely
-// (deleting a line = done). The read side (recall, backlog mode) surfaces it.
+// ── Next steps: the `## Next steps` section of each per-source report ─────────
+// Next steps live IN the report that raised them (raw/<key>.report.md), as GFM
+// task-list items under a `## Next steps` heading — one list, no follow-ups/actions
+// split. The backlog is a DERIVED view: scan every report's Next steps and group by
+// source, so each item keeps the provenance the old flat central file lost. There is
+// no central follow-ups.md anymore. URL/source-only — sessions emit no backlog.
 
-export function followupsPath(briefsDir) {
-	return join(briefsDir, ".clearvoid", "follow-ups.md");
+/** A report's raw cache lives at <repoRoot>/raw/; reports are its `*.report.md`
+ *  siblings. briefsDir is `<repoRoot>/briefs`, so the repo root is its parent. */
+export function rawDirForBriefsDir(briefsDir) {
+	return join(dirname(resolve(briefsDir)), "raw");
 }
 
 /**
- * Parse the backlog into its two bullet lists. Sections are the `## Follow-ups`
- * and `## Actions` headings (case-insensitive); a list item is any line starting
- * with `- `. Returns `{ followUps, actions }` (the raw bullet text, `- ` stripped),
- * empty arrays when the file is absent. Deliberately loose — entries are
- * human-editable prose, so we collect lines, not a rigid schema.
+ * Parse the `## Next steps` task-list items out of one report's markdown. Items are
+ * GFM task items `- [ ] text` / `- [x] text`; `done` reads the box, `text` is the
+ * rest (tail and `[[brief]]` link kept), `raw` is the verbatim line (the mutate key).
+ * Deliberately loose: only the `## Next steps` section is scanned, a missing section
+ * yields []. A line that isn't a task item (plain bullet, prose) is ignored.
  */
-export function loadFollowups(briefsDir) {
-	let text;
-	try {
-		text = readFileSync(followupsPath(briefsDir), "utf8");
-	} catch {
-		return { followUps: [], actions: [] };
-	}
-	const out = { followUps: [], actions: [] };
-	let bucket = null;
-	for (const line of text.split("\n")) {
+export function parseNextSteps(reportText) {
+	const items = [];
+	let inSection = false;
+	for (const line of reportText.split("\n")) {
 		const h = line.match(/^##\s+(.+?)\s*$/);
 		if (h) {
-			const name = h[1].toLowerCase();
-			bucket = name.startsWith("follow") ? "followUps" : name.startsWith("action") ? "actions" : null;
+			inSection = h[1].trim().toLowerCase() === "next steps";
 			continue;
 		}
-		const item = line.match(/^\s*-\s+(.*\S)\s*$/);
-		if (item && bucket) out[bucket].push(item[1]);
+		if (!inSection) continue;
+		const m = line.match(/^-\s+\[([ xX])\]\s+(.*\S)\s*$/);
+		if (m) items.push({ text: m[2], done: m[1] !== " ", raw: line });
 	}
-	return out;
+	return items;
+}
+
+/**
+ * Every report under a repo that carries Next steps, grouped by source. Reads
+ * `<repoRoot>/raw/*.report.md`, joins each item to its source via the report's
+ * `report_of`/`title` frontmatter. Returns `{ sources: [{ url, title, reportPath,
+ * items: [{text, done, raw}] }] }`; reports with no Next steps are omitted. Tolerant:
+ * a missing raw dir or unreadable file degrades to empty, never throws.
+ */
+export function loadNextSteps(briefsDir) {
+	const rawDir = rawDirForBriefsDir(briefsDir);
+	let entries;
+	try {
+		entries = readdirSync(rawDir, { withFileTypes: true });
+	} catch {
+		return { sources: [] };
+	}
+	const sources = [];
+	for (const e of entries) {
+		if (!e.isFile() || !e.name.endsWith(".report.md")) continue;
+		let text;
+		try {
+			text = readFileSync(join(rawDir, e.name), "utf8");
+		} catch {
+			continue;
+		}
+		const items = parseNextSteps(text);
+		if (items.length === 0) continue;
+		const head = text.match(/^---\n([\s\S]*?)\n---/);
+		const fm = head ? head[1] : "";
+		const url = (fm.match(/^report_of:\s*(.+)$/m)?.[1] ?? "").trim();
+		const title = (fm.match(/^title:\s*(.+)$/m)?.[1] ?? "").trim();
+		sources.push({
+			url,
+			title: title || url || e.name.replace(/\.report\.md$/, ""),
+			reportPath: join(rawDir, e.name),
+			items,
+		});
+	}
+	sources.sort((a, b) => a.title.localeCompare(b.title));
+	return { sources };
 }
 
 /** Record a rendered unit's watermark as pending. Numeric line offsets advance

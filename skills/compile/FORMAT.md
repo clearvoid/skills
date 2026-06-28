@@ -14,10 +14,9 @@ The contract every client shares: the compile skill, the desktop app, any editor
       state.json               # ONE watermark for the whole repo (committed — team-shared)
       ignore                   # source-unit ids/globs excluded from compile (committed)
       config.json              # OPTIONAL per-repo settings (e.g. context scope) — commit or not, your call
-      follow-ups.md            # OPTIONAL co-authored follow-ups/actions backlog (NOT a brief)
   raw/                         # url-sourced extracted substrate (sibling of briefs/, see below)
     <key>.md                   # verbatim extracted substrate (script-managed cache)
-    <key>.summary.md           # per-source detailed breakdown (agent-written reading view)
+    <key>.report.md            # per-source report (reading view + briefs-updated + next steps)
 ```
 
 No artifacts are ever written into the user's repo besides the brief files themselves — no generated index/`README.md`, no HTML viewers, no generated blobs. The read side (the recall skill, the workbench) builds its selection surface by scanning brief frontmatter on demand. Markdown IS the viewer story: briefs render natively on GitHub, Obsidian, and any editor. (An on-demand local viewer — `npx clearvoid view`-shaped — is a possible later client; it is never a committed file.)
@@ -41,7 +40,9 @@ Briefs may live in subfolders under `briefs/` at **any depth** — a "collection
 
 The `url:` source caches the extracted markdown it fetches at `<repo root>/raw/<key>.md` — at the **repo root**, a sibling of `briefs/`, deliberately **outside** `briefs/` so the recursive brief reader never mistakes a transcript or article body for a brief. (Inside `briefs/`, recursion would otherwise pick it up.) The cache is plain markdown with a small header (`source_type`, `url`, `title`, …) and is safe to keep indefinitely; gitignoring `raw/` is left to the user.
 
-Alongside the verbatim cache, compile writes a **per-source detailed summary** to a sibling `raw/<key>.summary.md` — a length-proportional breakdown of that one source (frontmatter `summary_of: <canonical-url>`, `title:`, `generated:`, then the markdown body). It's the desktop Links tab's reading view, complementary to the cross-source briefs; the verbatim `<key>.md` stays a pure script-managed cache and never carries the summary. Written once at compile time (frozen — the url watermark holds), url sources only. See `sources/url.md`.
+Alongside the verbatim cache, compile writes a **per-source report** to a sibling `raw/<key>.report.md` — frontmatter `report_of: <canonical-url>`, `title:`, `generated:`, then five body sections (`## Summary` and `## Briefs updated` always present, the rest best-effort): `## Summary` (a length-proportional in-order breakdown of that one source — the reading view), `## Briefs updated` (which briefs this source contributed to and what it added, as `[[slug]]` pointers, never a restatement), `## Takeaways` (the interpretive residue a neutral summary wouldn't contain — what a reader actually learned, not the thesis restated), `## Pushbacks` (specific skeptical reads — where the source is thin, marketing, or dodges; omitted rather than padded when nothing grounded is there) and `## Next steps` (the grounded research threads and to-dos this source raised — see below). It's the desktop Links tab's reading view, complementary to the cross-source briefs; the verbatim `<key>.md` stays a pure script-managed cache and never carries the report. Written once at compile time (frozen — the url watermark holds), url sources only. See `sources/url.md`.
+
+The `## Next steps` section is the backlog, and it lives in the report deliberately — every next step sits under the source that raised it, so its provenance is intrinsic, not a flat central list that loses where each item came from. Items are GFM task-list bullets so a reader can check one off: `- [ ] <a research thread to chase or a thing to do> (src: <source-id> · <date> · [[brief]])`, `- [x] …` once done. One list — no follow-ups/actions split: an item backed by a brief just carries its `[[brief]]` link. **Grounded only**: a concrete next source, a thread the source actually raised, or a specific implication — never generic "explore X further" filler; a source that raises nothing grounded gets no section. The derived backlog view (recall's backlog mode, the desktop app) scans these sections across every report and groups them by source. The desktop app can toggle an item done or delete it (writing back to the report); compile never revisits a frozen report, so done-ness is the human's to express. Sessions and `md:` sources have no report, so they emit no next steps — their threads surface in the chat report and become briefs.
 
 ## Brief file
 
@@ -73,10 +74,12 @@ Rules:
 
 - **Framing is the human anchor.** Compile *seeds* a framing on create and may **refine** an existing framing on a later run when the compiled view has clearly outgrown the original lens — but the framing is the human's, so editing it is high-friction: lightest touch (refine and extend, don't wholesale-reword), preserve the original intent, and **call out every framing change explicitly in the run report** (which brief, what changed, why). Briefs live in git and compile never commits, so a framing change rides as a reviewable diff hunk the human stages by hand — the diff is the review pass, the report is what points them at it. Edit the framing in any editor and the next compile respects it without being told to. There is deliberately no status field and no provenance tracking of who edited what when: that machinery would complicate the system, and the git diff is the gate that makes it unnecessary.
 - **A framing evolves with the material, never with a single run's emphasis.** A directive or emphasis token steers what the body attends to; it must never rewrite the framing to chase one run's instruction. A framing moves only because the accumulated material has outgrown it. On conflict between emphasis and framing, obey the framing as written and flag the tension in the report.
+- **`anchor: true` is human/app territory — preserve it, never author it.** A brief whose frontmatter carries `anchor: true` is a load-bearing brief a human (or the desktop app's pin button) has marked; the recall skill always loads it in full and weights it first. It is the one frontmatter key besides `framing` that is not the agent's to set: compile **preserves an existing `anchor` flag untouched on every update, and never adds or removes it**. (Absent, or anything other than `true`, means not anchored.)
 - **The body is a snapshot; the optional `## Log` carries the trail.** The brief body above any `## Log` heading is the *current view* — the present position, kept tight, not a diary of how it got there. A brief may carry a trailing `## Log` section: dated entries, newest last, each pairing a decision or material view-change with the verbatim source quote(s) and date that anchor it. This keeps the current view from bloating while preserving the receipts and a record that lets the view be re-evaluated later. On update, append a Log entry when the view materially moves or a quote is worth anchoring — never restate the body there, and never let Log content leak up into the snapshot. The Log is optional: thin or purely-factual briefs may omit it.
 - **Obsidian-renderable by construction:** standard YAML frontmatter, plain markdown body, native wikilinks. No custom syntax, no Tailwind-of-markdown.
 - **No hard-wrapping inside paragraphs — one paragraph per line.** Briefs are retrieved by grep and reviewed by diff; a phrase that spans a wrapped line breaks search, and re-flowed paragraphs turn one-word edits into wall-of-churn diffs.
 - Source ids are namespaced from day one: `claude-code:<sessionId>`, `md:<abs-path>`, `url:<canonical-url>`, `chatgpt:<conversationId>` — the schema is source-aware, so each new source drops in without migration. The `url:` id is the canonical URL itself (the same string the watermark uses); it stays resolvable as long as the page exists (and the `raw/` cache keeps a local copy of the extracted substrate regardless). See the per-source docs under `sources/`.
+- **`sources:` lists only COMPILED units, never citations.** Every id in `sources:` must be a unit actually put through compile — it carries a watermark in `state.json` (and, for `url:`, a `raw/` cache). A URL a brief merely references or cites in prose is **not** a source: keep it inline in the body where it's cited, never add it to `sources:`. The read side treats every `url:` source as a compiled link (the desktop Links tab keys off exactly this), so a citation parked in `sources:` surfaces as a phantom link with no reading view behind it. If you want a referenced URL to become a real source, compile it (`url:<u>`); until then it stays a body citation.
 
 ## state.json (the visited-sessions watermark)
 
@@ -97,27 +100,9 @@ Rules:
 - **One state.json per repo.** The watermark lives at the briefs root, `briefs/.clearvoid/state.json`, regardless of `to:`. The whole repo is one pool (collections are folders, not walls — see Collections): a source is compiled once and informs every collection, so there is a single watermark, not one per collection. `to:` only sets where new brief *files* land, never which watermark a run reads or writes.
 - **Committed to git, deliberately:** sessions are per-user (ids never collide across machines), so a shared watermark gives the team incremental semantics for free — a new teammate's compile doesn't refold what others already folded in. Content-free by rule: ids, counts, timestamps, brief slugs. Never titles, never text.
 
-## follow-ups.md — the follow-ups / actions backlog
+## Next steps — the backlog (lives in each source's report)
 
-`briefs/.clearvoid/follow-ups.md` is an OPTIONAL, repo-level, co-authored backlog — the durable home for what a compile would otherwise only mention in its chat report and then lose. It lives in `.clearvoid/` (not a collection) deliberately, so the recursive brief reader never mistakes it for a brief: it is **not** a brief, has no framing, and never enters the recall selection surface as one.
-
-```markdown
----
-version: 1
----
-# Follow-ups & Actions
-
-## Follow-ups
-- <research thread worth going deeper on> (src: <source-id> · <date> · [[brief]])
-
-## Actions
-- <thing to do, often backed by a brief> (backing: [[brief]] · src: <source-id> · <date>)
-```
-
-- **Two sections.** `## Follow-ups` are research threads worth pursuing (usually a future compile — a follow-up *becomes* a brief once compiled). `## Actions` are things to do, often backed by a brief (an action *cites* a brief as its research backing). Each item is a `- ` bullet with a short metadata tail (source id, date, and a `[[brief]]` link where relevant).
-- **Co-authored, like framings.** Compile *appends* grounded items and dedupes against what's there; it never deletes or rewrites a human-authored line. The human edits and deletes freely — **deleting a line means done** (no status field, the same no-status philosophy as briefs). The human also seeds items the agent can't infer (a "we need our own pitch"-style reminder).
-- **Grounded only.** An entry is a concrete next source, a thread a source actually raised, or a specific implication — never generic "explore X further" filler. A compile run that surfaces nothing grounded writes nothing.
-- **Surfaced, not auto-acted.** The read side (`/clearvoid:recall` backlog mode, via `resolveRoots.mjs --backlog`) aggregates `follow-ups.md` across the in-scope roots and prints it; nothing acts on it automatically.
+The backlog of research threads and to-dos is **not** a central file. It is the `## Next steps` section of each per-source report (`raw/<key>.report.md`), so every item sits under the source that raised it and keeps its provenance. See the `raw/` report section above for the section's shape (GFM task items, one list, grounded-only) and `sources/url.md` for how compile writes it. The derived backlog view (`/clearvoid:recall` backlog mode via `resolveRoots.mjs --backlog`, and the desktop app) scans these sections across every report and groups them by source; nothing acts on them automatically. The desktop app can toggle an item done or delete it (writing back to the report) — that, or a hand-edit, is how done-ness is expressed, since compile never revisits a frozen report.
 
 ## Teams (same repo → same substrate)
 
@@ -179,5 +164,5 @@ Raw-session archival. JSONLs purge after ~30 days; provenance pointers go best-e
 ## Open questions for Alex
 
 1. `briefs/` as the folder name — or `.briefs/`/`docs/briefs/`? (Visible top-level `briefs/` is the bet: it's a feature of the repo, not metadata.)
-2. Frontmatter field for per-brief extracts/provenance detail (the desktop's extract layer) — v0 keeps only the `sources` list; brief extracts stay implicit in the body. (Partially resolved for url sources: a per-*source* detailed summary now lives at `raw/<key>.summary.md`. A per-*brief* extract layer is still open.)
+2. Frontmatter field for per-brief extracts/provenance detail (the desktop's extract layer) — v0 keeps only the `sources` list; brief extracts stay implicit in the body. (Partially resolved for url sources: a per-*source* report now lives at `raw/<key>.report.md`. A per-*brief* extract layer is still open.)
 3. Does `state.json` committed-by-default survive contact with real teams, or does it want to be gitignored for solo users? (Committed is the default bet for the team semantics.)
