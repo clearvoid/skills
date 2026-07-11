@@ -24,6 +24,7 @@ import {
 	canonicalizeUrl,
 	findRepoRoots,
 	loadBriefsIndex,
+	summaryBloatWarnings,
 	loadRoots,
 	resolveCollection,
 	resolveDestination,
@@ -106,9 +107,12 @@ async function resolveChannelId(sel) {
 	});
 	if (!res.ok) throw new Error(`channel page ${pageUrl} → HTTP ${res.status}`);
 	const html = await res.text();
+	// CONTEXT: externalId first — it is always the page OWNER's id, while the
+	// first "channelId" match in the HTML can be a featured/related channel
+	// (a @t3dotgg lookup once resolved to the owner's secondary channel that way).
 	const m =
-		html.match(/"channelId":"(UC[\w-]{22})"/) ??
 		html.match(/"externalId":"(UC[\w-]{22})"/) ??
+		html.match(/"channelId":"(UC[\w-]{22})"/) ??
 		html.match(/channel\/(UC[\w-]{22})/);
 	if (!m) throw new Error(`could not find channelId in ${pageUrl}`);
 	return m[1];
@@ -230,6 +234,9 @@ if (!existsSync(briefsRoot) && !inRepo && !registered) {
 	);
 }
 
+const briefsIndex = loadBriefsIndex(briefsRoot);
+warnings.push(...summaryBloatWarnings(briefsIndex));
+
 console.log(
 	JSON.stringify(
 		{
@@ -239,7 +246,7 @@ console.log(
 			newBriefsDir,
 			rawDir,
 			generatedAt: new Date().toISOString(),
-			briefs: loadBriefsIndex(briefsRoot),
+			briefs: briefsIndex,
 			queue,
 			upToDateCount: upToDate.length,
 			matched: urls.length,

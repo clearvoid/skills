@@ -397,6 +397,89 @@ export function canonicalizeUrl(raw) {
 	return out;
 }
 
+// ── Research source keys ──────────────────────────────────────────────────
+// A `research:` unit is keyed by a filesystem-safe slug, shared by the research
+// skill's fetchResearch (which WRITES raw/<key>.research.md) and compile's
+// list/renderResearch (which READ it). For a per-source research pass over a URL
+// the key tracks the URL (so it sits beside that URL's verbatim cache); for a
+// freeform/per-theme pass the key is a slug of the topic. Returns the BARE key —
+// callers append `.research.md` (substrate) or `.research.report.md` (report).
+export function slugify(s, max = 180) {
+	return (
+		String(s)
+			.toLowerCase()
+			.replace(/^https?:\/\//, "")
+			.replace(/[^a-z0-9._-]+/g, "-")
+			.replace(/-+/g, "-")
+			.replace(/^-|-$/g, "")
+			.slice(0, max) || "research"
+	);
+}
+
+export function researchKey({ query, url } = {}) {
+	if (url) {
+		let canonical;
+		try {
+			canonical = canonicalizeUrl(url);
+		} catch {
+			canonical = url;
+		}
+		const vid = youtubeVideoId(canonical);
+		return vid ? `youtube-${vid}` : slugify(canonical);
+	}
+	return slugify(query ?? "");
+}
+
+// ── Chrome-home briefs-chat API (shared by listChat + renderChat) ───────────
+// The `chat` source folds brief-primed chat threads — chrome-home's Briefs tab,
+// or any server speaking the same tiny contract — into briefs. CONTEXT: the
+// reference server is chrome-home (localhost:3010), ours; but the source is
+// defined against the CONTRACT (GET /chat/briefs-threads, GET
+// /chat/sessions/:id/markdown), not that server, so anyone running a compatible
+// endpoint points CLEARVOID_CHAT_API_URL at it — exact parity with how the `url`
+// source is gated by CLEARVOID_EXTRACT_URL. Both list (enumerate + watermark) and
+// render (fetch one thread) hit the same base and key each thread by the SAME
+// messageCount watermark, so they must derive it identically (see url.mjs pair).
+
+export function chatApiBase() {
+	return (
+		process.env.CLEARVOID_CHAT_API_URL ?? "http://localhost:3010/v1/api"
+	).replace(/\/+$/, "");
+}
+
+// Auth is optional (chrome-home is a local open server); send a Bearer only when
+// CLEARVOID_CHAT_API_TOKEN is set, for a deployment configured closed.
+function chatHeaders() {
+	const token = process.env.CLEARVOID_CHAT_API_TOKEN;
+	return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+/**
+ * GET /chat/briefs-threads → the brief-primed threads with metadata only (no
+ * bodies): { id, title, briefsFilter, updatedAt, messageCount, firstUserMessage }.
+ * The single cheap enumeration call — list never fetches a thread body, and render
+ * uses it only to resolve its thread's messageCount + title before fetching one body.
+ */
+export async function fetchBriefsThreads() {
+	const url = `${chatApiBase()}/chat/briefs-threads`;
+	const res = await fetch(url, { headers: chatHeaders() });
+	if (!res.ok) {
+		throw new Error(`briefs-threads → HTTP ${res.status} ${res.statusText} (${url})`);
+	}
+	const body = await res.json();
+	return Array.isArray(body.threads) ? body.threads : [];
+}
+
+/** GET /chat/sessions/:id/markdown → the whole thread as markdown (the substrate). */
+export async function fetchThreadMarkdown(id) {
+	const url = `${chatApiBase()}/chat/sessions/${encodeURIComponent(id)}/markdown`;
+	const res = await fetch(url, { headers: chatHeaders() });
+	if (!res.ok) {
+		throw new Error(`thread markdown → HTTP ${res.status} ${res.statusText} (${url})`);
+	}
+	return await res.text();
+}
+
 // Recursive walk; skips dotfiles/dotdirs (.git, .clearvoid, etc.). `predicate`
 // decides which files to collect. Shared by listMarkdown (any .md) and the
 // recall skill's resolveRoots (briefs: .md minus README.md).
@@ -565,6 +648,36 @@ export function readBriefFrontmatter(text) {
 	// anchor: true marks a load-bearing brief recall always loads (in full) and
 	// weights first; compile preserves it but never authors it. Boolean.
 	fm.anchor = /^anchor:\s*true\s*$/m.test(head);
+	// tags: human-curated filter axis (FORMAT.md). Canonical inline-flow form
+	// `tags: [a, b, c]`; tolerate a bare comma list (with an optional trailing
+	// YAML comment) and a block list (`- a` lines). Each token is unquoted, has a
+	// leading `#` stripped (the contract stores bare), and empties drop. Preserved
+	// by compile, never authored — surfaced so recall can select on a tag. Mirrors
+	// the desktop parser (packages/desktop-core/files/briefFiles.ts), hand-locked.
+	let tagTokens = [];
+	// `[ \t]*` not `\s*`: an empty value must NOT swallow the newline into the
+	// block-list form below. Require a non-space first char so `tags:` alone misses.
+	const tagsInline = head.match(/^tags:[ \t]*(\S[^\n]*)$/m);
+	if (tagsInline) {
+		let inner = tagsInline[1].trim();
+		if (inner.startsWith("[")) {
+			const end = inner.lastIndexOf("]");
+			inner = inner.slice(1, end > 0 ? end : undefined);
+		} else {
+			inner = inner.replace(/\s+#.*$/, ""); // drop a trailing YAML comment
+		}
+		tagTokens = inner.split(",");
+	} else {
+		const block = head.match(/^tags:[ \t]*\n((?:[ \t]+-[ \t].*\n?)+)/m);
+		if (block) {
+			tagTokens = block[1]
+				.split("\n")
+				.map((l) => l.replace(/^[ \t]+-[ \t]*/, ""));
+		}
+	}
+	fm.tags = tagTokens
+		.map((t) => t.trim().replace(/^["']|["']$/g, "").replace(/^#\s*/, ""))
+		.filter(Boolean);
 	return fm;
 }
 
@@ -618,6 +731,35 @@ export function loadBriefsIndex(briefsRoot) {
 	return briefs;
 }
 
+// The summary is the recall selection key: a tight 1–2-sentence distillation of
+// the brief's current view (FORMAT.md target ~60 words). It regresses silently
+// by accretion — an incremental compile that appends "source X adds Y" instead
+// of rewriting ratchets it up, and a hot brief that many sources route into can
+// balloon to thousands of words (this is exactly how the research/brain repos
+// grew 500–5000-word summaries before this guard existed). A bloated summary
+// degrades selection across the WHOLE repo, so the drift is worth surfacing on
+// every compile. Threshold is set well above a legitimately dense summary
+// (~90–100 words in practice, incl. a 3-sentence anchor brief) so this fires
+// only on genuine bloat, never as style-nitpick noise on a good summary.
+// CONTEXT: warning, not a hard cap — the summary is authored by the model into
+// the file; a script can't compress it well. Surfaced through the list step's
+// `warnings` (SKILL.md tells the agent to surface warnings), so the next compile
+// that touches the brief rewrites it instead of appending to it again.
+export const SUMMARY_WORD_CAP = 120;
+export function summaryBloatWarnings(briefs) {
+	const out = [];
+	for (const b of briefs) {
+		if (!b.summary) continue;
+		const words = b.summary.trim().split(/\s+/).filter(Boolean).length;
+		if (words <= SUMMARY_WORD_CAP) continue;
+		const where = b.collection ? `${b.collection}/${b.slug}` : b.slug;
+		out.push(
+			`brief "${where}" has a ${words}-word summary — the summary: field is the recall selection key and must be a tight 1–2 sentences (~60 words; FORMAT.md), not a changelog. REWRITE it to the current view distilled (never append a per-source delta), or it degrades brief selection across the repo.`,
+		);
+	}
+	return out;
+}
+
 // ── The watermark: progress.json (pending) → state.json (committed) ──────────
 // CONTEXT: watermarking used to be a per-unit `updateState` call the agent ran
 // after folding each session in. It depended on agent discipline and was
@@ -660,12 +802,20 @@ export function rawDirForBriefsDir(briefsDir) {
 	return join(dirname(resolve(briefsDir)), "raw");
 }
 
+// The follow-up flag marker (a leading ⭐ on a Next-steps item). Named so the one
+// FORMAT.md contract symbol isn't a bare literal sprinkled through the parser. The
+// desktop reader keeps its own copy of this (desktop-core/files/nextSteps.ts) — the
+// two are deliberately separate, kept in lockstep by the FORMAT.md contract.
+const FLAG_MARKER = "⭐";
+
 /**
  * Parse the `## Next steps` task-list items out of one report's markdown. Items are
  * GFM task items `- [ ] text` / `- [x] text`; `done` reads the box, `text` is the
  * rest (tail and `[[brief]]` link kept), `raw` is the verbatim line (the mutate key).
- * Deliberately loose: only the `## Next steps` section is scanned, a missing section
- * yields []. A line that isn't a task item (plain bullet, prose) is ignored.
+ * A leading `⭐ ` right after the box flags the item as a follow-up (`flagged`,
+ * orthogonal to done); the marker is stripped from `text`. Deliberately loose: only
+ * the `## Next steps` section is scanned, a missing section yields []. A line that
+ * isn't a task item (plain bullet, prose) is ignored.
  */
 export function parseNextSteps(reportText) {
 	const items = [];
@@ -678,7 +828,13 @@ export function parseNextSteps(reportText) {
 		}
 		if (!inSection) continue;
 		const m = line.match(/^-\s+\[([ xX])\]\s+(.*\S)\s*$/);
-		if (m) items.push({ text: m[2], done: m[1] !== " ", raw: line });
+		if (m) {
+			const flagged = m[2].startsWith(FLAG_MARKER);
+			const text = flagged
+				? m[2].slice(FLAG_MARKER.length).replace(/^\s+/, "")
+				: m[2];
+			items.push({ text, done: m[1] !== " ", flagged, raw: line });
+		}
 	}
 	return items;
 }
@@ -687,7 +843,7 @@ export function parseNextSteps(reportText) {
  * Every report under a repo that carries Next steps, grouped by source. Reads
  * `<repoRoot>/raw/*.report.md`, joins each item to its source via the report's
  * `report_of`/`title` frontmatter. Returns `{ sources: [{ url, title, reportPath,
- * items: [{text, done, raw}] }] }`; reports with no Next steps are omitted. Tolerant:
+ * items: [{text, done, flagged, raw}] }] }`; reports with no Next steps are omitted. Tolerant:
  * a missing raw dir or unreadable file degrades to empty, never throws.
  */
 export function loadNextSteps(briefsDir) {
@@ -764,7 +920,9 @@ function sessionBriefMap(briefsDir) {
 		const fm = text.match(/^---\n([\s\S]*?)\n---/);
 		if (!fm) continue;
 		const slug = basename(file, ".md");
-		for (const m of fm[1].matchAll(/-\s*((?:claude-code|md|url):\S+)/g)) {
+		for (const m of fm[1].matchAll(
+			/-\s*((?:claude-code|md|url|research|chat):\S+)/g,
+		)) {
 			(map[m[1]] ??= []).push(slug);
 		}
 	}

@@ -9,12 +9,13 @@ Read the specific source doc before compiling that source:
 | `claude-code` (default) | `claude-code.md` | non-empty JSONL lines of a session | line offset (numeric) | a git repo |
 | `md` | `markdown.md` | a whole `.md` file | content hash (`sha256:…`) | free (any cwd) |
 | `url` | `url.md` | a URL | canonical URL (stable string) | free (any cwd) |
+| `chat` | `chat.md` | a brief-primed chat thread | `messageCount` (integer, monotonic) | free (any cwd) |
 
 ## The interface a source implements
 
 Two scripts, both pure Node, both emitting/consuming source-namespaced ids (`<source>:<...>` — e.g. `claude-code:<encoded-dir>/<uuid>`, `md:<abs-path>`, `url:<canonical-url>`):
 
-- **`list`** (`listSessions.mjs` / `listMarkdown.mjs` / `listUrl.mjs`) — enumerate units, compare each against the repo's one `state.json` watermark, and emit the **queue**: the units with new content, plus `briefsRoot` (the one pool — orientation, watermark, render's `--briefs-dir`, registration) and `newBriefsDir` (the `to:` collection where new briefs are filed). Same JSON shape across sources so the SKILL's Process stays single:
+- **`list`** (`listSessions.mjs` / `listMarkdown.mjs` / `listUrl.mjs` / `listChat.mjs`) — enumerate units, compare each against the repo's one `state.json` watermark, and emit the **queue**: the units with new content, plus `briefsRoot` (the one pool — orientation, watermark, render's `--briefs-dir`, registration) and `newBriefsDir` (the `to:` collection where new briefs are filed). Same JSON shape across sources so the SKILL's Process stays single:
 
   ```
   { source, briefsRoot, newBriefsDir, generatedAt, briefs: [ { slug, collection, title, framing, summary, updated } ], queue: [ { id, title, firstMessage, newTokens, current, ...watermark } ], upToDateCount }
@@ -22,9 +23,9 @@ Two scripts, both pure Node, both emitting/consuming source-namespaced ids (`<so
 
   `briefs` is the **orientation index** (SKILL.md step 1): every brief in the repo, across every collection, with its framing + summary. It is delivered by every `list` script (`loadBriefsIndex` in `lib.mjs`, called on `briefsRoot`) so the compiling agent has every framing in context before it clusters — deterministically, not by remembering to read each file, and repo-global because collections are folders, not walls. (CONTEXT: orientation used to be a prose instruction the model could grep/sample its way around and silently miss a thread that lived only in another brief's body — same failure class as the pre-deterministic watermark.)
 
-  Source-specific watermark fields ride alongside: claude-code adds `compiledLines`/`newLines` (numeric offset); md and url both add `watermark`/`prevWatermark` (md's is the content hash, url's is the canonical URL — the string to record).
+  Source-specific watermark fields ride alongside: claude-code adds `compiledLines`/`newLines` (numeric offset); md, url, and chat all add `watermark`/`prevWatermark` (md's is the content hash, url's is the canonical URL, chat's is the thread's `messageCount` — the value to record).
 
-- **`render`** (`renderSession.mjs` / `renderMarkdown.mjs` / `renderUrl.mjs`) — one id → clean markdown substrate, header + body. claude-code renders incrementally (`--from-line N`); md re-renders the whole file (its watermark is a hash, not an offset); url fetches the extracted markdown (cache-first from `raw/`, see `url.md`). Given `--briefs-dir`, render also records the unit's watermark as pending progress — so watermarking is a byproduct of reading, not a separate step the caller must remember.
+- **`render`** (`renderSession.mjs` / `renderMarkdown.mjs` / `renderUrl.mjs` / `renderChat.mjs`) — one id → clean markdown substrate, header + body. claude-code renders incrementally (`--from-line N`); md re-renders the whole file (its watermark is a hash, not an offset); url fetches the extracted markdown (cache-first from `raw/`, see `url.md`); chat fetches the thread markdown from the chat API and re-renders the whole thread when it grows (`messageCount` watermark, see `chat.md`). Given `--briefs-dir`, render also records the unit's watermark as pending progress — so watermarking is a byproduct of reading, not a separate step the caller must remember.
 
 The destination layer is shared and source-agnostic. The watermark is committed in two moves: render records pending progress (above), then `finalizeState.mjs` folds all of it into `state.json` once at the end of the run — deterministic, independent of per-unit discipline. `registerRoot.mjs` adds the briefs dir to `~/.clearvoid/roots.json`. Both take a plain `--briefs-dir` and never touch git.
 

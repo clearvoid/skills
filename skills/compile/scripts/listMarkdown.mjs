@@ -16,6 +16,7 @@ import { basename, join, resolve } from "node:path";
 import {
 	findRepoRoots,
 	loadBriefsIndex,
+	summaryBloatWarnings,
 	loadRoots,
 	resolveCollection,
 	resolveDestination,
@@ -167,6 +168,9 @@ if (!existsSync(briefsRoot) && !inRepo && !registered) {
 	);
 }
 
+const briefsIndex = loadBriefsIndex(briefsRoot);
+warnings.push(...summaryBloatWarnings(briefsIndex));
+
 console.log(
 	JSON.stringify(
 		{
@@ -175,7 +179,7 @@ console.log(
 			briefsRoot,
 			newBriefsDir,
 			generatedAt: new Date().toISOString(),
-			briefs: loadBriefsIndex(briefsRoot),
+			briefs: briefsIndex,
 			queue,
 			upToDateCount: upToDate.length,
 			matched: files.length,

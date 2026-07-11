@@ -77,6 +77,9 @@ function describe(briefsDir, kind) {
 			// anchor: load-bearing brief recall always loads (in full) and weights
 			// first. currentViewLines: Read `limit` so the `## Log` history isn't loaded.
 			anchor: fm.anchor ?? false,
+			// tags: human-curated filter axis — lets recall select on "load
+			// everything tagged X" and weigh a topic that matches a tag.
+			tags: fm.tags ?? [],
 			currentViewLines: currentViewLineCount(content),
 		});
 	}
@@ -135,6 +138,79 @@ const otherRoots = registry.roots.filter(
 const selected = [];
 const available = [];
 for (const r of otherRoots) (inScope(r) ? selected : available).push(r);
+
+// Flagged mode (recall's `--flagged`): the action-list cut of the backlog. Surface
+// only the flagged-and-open items (the leading ⭐, not yet done) across in-scope
+// roots, AND resolve the full context to hand an agent — the briefs each flagged
+// item links (`[[slug]]`) and the per-source reports they live in — so the caller
+// can load briefs + reports in full. Same scope rules as backlog.
+if (process.argv.includes("--flagged")) {
+	const inScopeDirs = [
+		...(currentDir ? [currentDir] : []),
+		...selected,
+	].map((d) => resolve(d));
+
+	const referencedSlugs = new Set();
+	const reportPaths = new Set();
+	const flaggedForRoot = (briefsDir, kind) => {
+		const dir = resolve(briefsDir);
+		const sources = loadNextSteps(dir)
+			.sources.map((s) => ({
+				...s,
+				items: s.items.filter((i) => i.flagged && !i.done),
+			}))
+			.filter((s) => s.items.length > 0);
+		for (const s of sources) {
+			reportPaths.add(s.reportPath);
+			for (const it of s.items)
+				for (const m of it.text.matchAll(/\[\[([^\]]+)\]\]/g))
+					referencedSlugs.add(m[1]);
+		}
+		return {
+			kind,
+			name: rootDisplayName(dir),
+			briefsDir: dir,
+			exists: existsSync(dir),
+			sources,
+		};
+	};
+
+	const roots = [
+		...(currentDir ? [flaggedForRoot(currentDir, "current-repo")] : []),
+		...selected.map((r) => flaggedForRoot(r, "registered")),
+	].filter((r) => r.sources.length > 0);
+
+	// Resolve `[[slug]]` links to brief paths — but only walk the brief dirs if a
+	// flagged item actually referenced one (skips the walk in the common no-flags case).
+	const briefs = [];
+	if (referencedSlugs.size > 0) {
+		const briefBySlug = new Map();
+		for (const dir of inScopeDirs)
+			for (const file of walk(dir, isBrief, [])) {
+				const slug = basename(file, ".md");
+				if (!briefBySlug.has(slug)) briefBySlug.set(slug, file);
+			}
+		for (const slug of referencedSlugs) {
+			const file = briefBySlug.get(slug);
+			if (file) briefs.push(file);
+		}
+	}
+
+	console.log(
+		JSON.stringify(
+			{
+				scope,
+				mode: "flagged",
+				roots,
+				// Read these in full to ground an agent on the flagged work.
+				load: { briefs, reports: [...reportPaths] },
+			},
+			null,
+			2,
+		),
+	);
+	process.exit(0);
+}
 
 // Backlog mode (recall's `--backlog`): surface each in-scope root's next-steps
 // backlog — the `## Next steps` of every per-source report (raw/*.report.md),

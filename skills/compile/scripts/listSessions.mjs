@@ -14,6 +14,7 @@ import {
 	encodeProjectPath,
 	findRepoRoots,
 	loadBriefsIndex,
+	summaryBloatWarnings,
 	resolveCollection,
 	nonEmptyLines,
 	parseSessionLines,
@@ -190,6 +191,8 @@ queue.sort((a, b) =>
 	(a.startedAt ?? a.mtime).localeCompare(b.startedAt ?? b.mtime),
 );
 
+const briefsIndex = loadBriefsIndex(briefsRoot);
+
 console.log(
 	JSON.stringify(
 		{
@@ -199,10 +202,11 @@ console.log(
 			briefsRoot,
 			newBriefsDir,
 			generatedAt: new Date(now).toISOString(),
-			briefs: loadBriefsIndex(briefsRoot),
+			briefs: briefsIndex,
 			queue,
 			upToDateCount: upToDate.length,
 			ignoredCount: ignored.length,
+			warnings: summaryBloatWarnings(briefsIndex),
 		},
 		null,
 		2,
