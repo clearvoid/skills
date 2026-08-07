@@ -10,8 +10,8 @@ A **free** source (the metered fetch already happened in the `/clearvoid:researc
 
 | Script | Job |
 |---|---|
-| `listResearch.mjs <research:key...> [--cwd <p>] [--briefs-dir <p>] [--to <p>]` | The queue: research keys vs the watermark (content hash of the cached substrate). JSON. Reads the local cache only. |
-| `renderResearch.mjs <research:key> [--briefs-dir <p>] [--raw-dir <p>]` | One key → substrate (the cached `raw/<key>.research.md` body); records its watermark. **No network** — the fetch already happened in the skill. |
+| `listResearch.mjs <research:key...> [--cwd <p>] [--briefs-dir <p>] [--to <p>]` | The queue: research keys vs the watermark (content hash of the cached substrate). Stub JSON on stdout naming the full payload file (Read it whole — SKILL.md step 1). Reads the local cache only. |
+| `renderResearch.mjs <research:key> [--briefs-dir <p>] [--raw-dir <p>]` | One key → substrate: header + a `substrate:` pointer at the cached `raw/<key>.research.md` (the body never rides stdout — Read the file whole); records its watermark. **No network** — the fetch already happened in the skill. |
 
 `listResearch` emits the shared queue shape (`{ source, briefsRoot, newBriefsDir, rawDir, queue, upToDateCount }`) plus, per entry, `watermark` (the substrate's content hash) and `prevWatermark`, and `errors` (e.g. a key whose substrate was never fetched) — surface them. The metered Exa + Grok call lives in the research skill's `fetchResearch.mjs`, never in these scripts.
 

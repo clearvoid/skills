@@ -5,7 +5,8 @@
 // then GET /chat/sessions/:id/markdown for the body. Keying the watermark off the
 // same briefs-threads response listChat uses keeps list + render identical (the
 // invariant the url pair enforces). The thread markdown is already clean substrate
-// (a rendered chat), emitted verbatim — no chrome-stripping.
+// (a rendered chat), written verbatim to the substrate payload file — no
+// chrome-stripping (stdout carries only the header + pointer; lib.mjs writePayload).
 //
 // Unlike sessions, chat gets a per-source report (raw/chat-<id>.report.md). The
 // thread transcript is NOT saved locally (id-reference only, decision 2026-07-02),
@@ -26,7 +27,13 @@
 //      CLEARVOID_CHAT_API_TOKEN (optional Bearer — only if the endpoint is closed)
 
 import { resolve, join } from "node:path";
-import { fetchBriefsThreads, fetchThreadMarkdown, recordProgress } from "./lib.mjs";
+import {
+	fetchBriefsThreads,
+	fetchThreadMarkdown,
+	recordProgress,
+	substrateNote,
+	writePayload,
+} from "./lib.mjs";
 
 function arg(name, fallback) {
 	const i = process.argv.indexOf(name);
@@ -90,4 +97,13 @@ console.log(
 // The per-source report path (raw/chat-<id>.report.md); the agent writes the report
 // (it's LLM output), this script only names the target so keying stays in one place.
 console.log(`report-target: ${join(rawDir, `chat-${threadId}.report.md`)}`);
-console.log(`\n${body}`);
+// NOTE: the thread transcript is deliberately NOT saved in the repo (id-reference
+// only, decision 2026-07-02) — this payload file lives in the OS temp dir and is
+// transient run scratch, not a local copy of the thread. Stdout can't carry the
+// body (Bash truncates over ~30KB; see lib.mjs writePayload).
+const { path: substratePath, lines: substrateLines } = writePayload(
+	`chat-${threadId}`,
+	"md",
+	`${body}\n`,
+);
+console.log(substrateNote(substratePath, substrateLines));

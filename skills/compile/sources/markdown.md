@@ -16,8 +16,8 @@ Multiple selectors are allowed. `~/` and relative paths (against `--cwd`) are ac
 
 | Script | Job |
 |---|---|
-| `listMarkdown.mjs <selector...> [--cwd <p>] [--briefs-dir <p>]` | The queue: matched `.md` files vs the watermark. JSON. |
-| `renderMarkdown.mjs <md:path> [--briefs-dir <p>] [--raw-dir <p>]` | One file → substrate (header + verbatim body); `--briefs-dir` records its watermark; prints a `report-target: <path>` line for the per-source report. |
+| `listMarkdown.mjs <selector...> [--cwd <p>] [--briefs-dir <p>]` | The queue: matched `.md` files vs the watermark. Stub JSON on stdout naming the full payload file (Read it whole — SKILL.md step 1). |
+| `renderMarkdown.mjs <md:path> [--briefs-dir <p>] [--raw-dir <p>]` | One file → substrate: a header plus a `substrate:` pointer at the file itself (the body never rides stdout — Read the file whole); `--briefs-dir` records its watermark; prints a `report-target: <path>` line for the per-source report. |
 
 `listMarkdown` emits the shared queue shape (`{ source, briefsRoot, newBriefsDir, queue, upToDateCount }`) plus, per entry, `watermark` (the file's current content hash) and `prevWatermark`. It also emits `errors` (bad selectors) and `warnings` — surface both to the user.
 

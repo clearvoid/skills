@@ -12,9 +12,10 @@ import {
 	readFileSync,
 	realpathSync,
 	rmSync,
+	statSync,
 	writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
 // FRAGILE: mirrors what Claude Code emits; grows across CC versions.
@@ -395,6 +396,55 @@ export function canonicalizeUrl(raw) {
 	// Drop a lone trailing slash on the path (but keep "/" for a bare host).
 	out = out.replace(/\/(\?|$)/, "$1").replace(/^(https?:\/\/[^/]+)$/, "$1/");
 	return out;
+}
+
+// ── AI-conversation URLs (browser capture) ──────────────────────────────────
+// Conversation URLs the extract endpoint cannot serve: the content sits behind a
+// login/bot wall (or, for grok shares, a bare SPA shell) and only renders in a
+// real browser. renderUrl routes these to the browser-capture flow
+// (sources/browser-capture.md) instead of the endpoint, and listUrl re-queues
+// them whenever they are explicitly named — conversations grow, and only the
+// browser can see whether this one did. Shared so both scripts route identically.
+// NOTE: chatgpt.com/share/ and claude.ai/share/ are deliberately NOT matched —
+// those pages server-render and stay on the extract-endpoint path.
+export function conversationSurface(u) {
+	let parsed;
+	try {
+		parsed = new URL(u);
+	} catch {
+		return null;
+	}
+	const host = parsed.hostname.replace(/^www\./, "");
+	const path = parsed.pathname;
+	if (host === "x.com" || host === "twitter.com") {
+		// Share links (/i/grok/share/<id>) and private conversation links
+		// (/i/grok?conversation=<id>) both route to the browser.
+		if (path.startsWith("/i/grok/share/")) return "grok";
+		if (path === "/i/grok" && parsed.searchParams.has("conversation"))
+			return "grok";
+	}
+	if (host === "grok.com" && /^\/(c|share)\//.test(path)) return "grok";
+	// Plain conversations (/c/<id>) and project/GPT conversations (/g/<slug>/c/<id>).
+	if (host === "chatgpt.com" && /^(\/g\/[^/]+)?\/c\//.test(path))
+		return "chatgpt";
+	if (host === "claude.ai" && path.startsWith("/chat/")) return "claude";
+	return null;
+}
+
+// Raw-cache key for a url unit — shared by renderUrl (reads/writes the cache)
+// and listUrl (checks capture existence for conversation re-queues) so the two
+// derive the SAME filename. A YouTube watch URL keys on its video id; any other
+// URL on a filesystem-safe slug of the canonical URL. Stable across runs.
+export function urlCacheKey(u) {
+	const vid = youtubeVideoId(u);
+	if (vid) return `youtube-${vid}.md`;
+	const slug = u
+		.replace(/^https?:\/\//, "")
+		.replace(/[^a-zA-Z0-9._-]+/g, "-")
+		.replace(/-+/g, "-")
+		.replace(/^-|-$/g, "")
+		.slice(0, 180);
+	return `${slug || "url"}.md`;
 }
 
 // ── Research source keys ──────────────────────────────────────────────────
@@ -927,6 +977,174 @@ function sessionBriefMap(briefsDir) {
 		}
 	}
 	return map;
+}
+
+// ── Payload spill: full output goes to a file, stdout stays a compact stub ───
+// CONTEXT: the Bash tool replaces any command output over ~30KB with a ~2KB
+// preview plus a "saved to file" note (boundary measured 2026-08-05 across 184
+// real compile runs: largest intact result 29.1KB, smallest truncated 29.4KB;
+// see plans/active/2026-08-05-lightweight-compile.md phase 1). listSessions
+// emitted 96KB in a mature repo, so the orientation index SKILL.md promises
+// never reached the model, and runs recovered with greps and
+// `renderSession | tail -100` — silently dropping the START of the session
+// being compiled. Therefore NO list/render script pipes a large payload
+// through stdout: the payload is written here and stdout carries a small stub
+// naming the file. The agent Reads the file (the Read tool has no such cap).
+export function writePayload(name, ext, text) {
+	const dir = join(tmpdir(), "clearvoid-compile");
+	mkdirSync(dir, { recursive: true });
+	// Best-effort prune of stale payloads (>24h) so tmp never grows unbounded
+	// on systems that don't clean their temp dir.
+	const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+	try {
+		for (const f of readdirSync(dir)) {
+			try {
+				const full = join(dir, f);
+				if (statSync(full).mtimeMs < cutoff) rmSync(full, { force: true });
+			} catch {
+				// another process may have removed it; pruning is best-effort
+			}
+		}
+	} catch {
+		// unreadable dir — skip pruning, the write below will surface real errors
+	}
+	// Timestamp + pid keeps concurrent runs (and multiple renders in one run)
+	// from colliding on a name.
+	const path = join(dir, `${name}-${Date.now()}-${process.pid}.${ext}`);
+	writeFileSync(path, text);
+	return { path, lines: text.split("\n").length };
+}
+
+// ── Scope-confirmation gate ─────────────────────────────────────────────────
+// CONTEXT: a compile can be far larger than the user expects. A cold start
+// processes the repo's ENTIRE session history, and the user has no idea before
+// it starts; SKILL.md step 3 pauses on the `confirmationGate` field this emits
+// and asks before anything is rendered or spent, regardless of model. Computed
+// here, deterministically, from the same queue the run will process, so the
+// prompt states what will actually be processed: the queue's post-chrome-strip
+// incremental `newTokens` sum, never raw `bytes` (overstates 30-300x) and
+// never the total size of all sessions on disk.
+// Headless callers declare themselves with CLEARVOID_ASSUME_YES=1 (then no
+// gate is emitted and the run never pauses): a non-interactive run that
+// stopped on the gate's question would hang forever, which is exactly the
+// hazard step 3's "never wait for confirmation" rule exists to prevent.
+
+// NOTE: trigger 2 ("large-run") is deliberately separable: delete the
+// LARGE_RUN_NEW_TOKENS constant and its block in confirmationGate() to remove
+// it without touching the cold-start trigger. Rationale for 150K: measured on
+// the heaviest real repo (plans/active/2026-08-05-lightweight-compile.md), a
+// routine incremental queue was ~23K newTokens and a full 30-day single-repo
+// substrate ~372K, so 150K is ~6x the largest routine queue (never fires on a
+// normal run) yet catches the months-away catch-up compile, which surprises
+// the user exactly like a cold start. chars/4 underestimates markdown ~1.25-
+// 1.5x, so the real volume at the threshold is higher still.
+export const LARGE_RUN_NEW_TOKENS = 150_000;
+
+/** The gate object for a list result, or null when no confirmation is needed
+ *  (empty queue, CLEARVOID_ASSUME_YES=1, or a routine incremental run). */
+export function confirmationGate(result) {
+	if (process.env.CLEARVOID_ASSUME_YES === "1") return null;
+	const queue = result.queue ?? [];
+	if (queue.length === 0) return null;
+	const newTokens = queue.reduce((a, u) => a + (u.newTokens ?? 0), 0);
+	const dates = queue
+		.map((u) => u.startedAt)
+		.filter(Boolean)
+		.sort();
+	const scope = {
+		units: queue.length,
+		newTokens,
+		...(dates.length
+			? {
+					dateSpan: {
+						from: dates[0].slice(0, 10),
+						to: dates[dates.length - 1].slice(0, 10),
+					},
+				}
+			: {}),
+		note:
+			"Confirmation required BEFORE rendering or spending anything: show the user these numbers " +
+			"(units, date span, newTokens as an approximate floor) and wait for an explicit yes, per SKILL.md step 3. " +
+			"Headless callers suppress this gate with CLEARVOID_ASSUME_YES=1.",
+	};
+	// Trigger 1: cold start, i.e. this run would create the repo's first slate of briefs.
+	if ((result.briefs ?? []).length === 0) {
+		return { trigger: "cold-start", ...scope };
+	}
+	// Trigger 2: an unusually large run even though briefs exist (see the
+	// LARGE_RUN_NEW_TOKENS comment above; delete this block to remove trigger 2).
+	if (newTokens >= LARGE_RUN_NEW_TOKENS) {
+		return { trigger: "large-run", threshold: LARGE_RUN_NEW_TOKENS, ...scope };
+	}
+	return null;
+}
+
+/**
+ * Emit a list script's result: the full JSON (contract unchanged) goes to a
+ * payload file, stdout gets a compact self-describing stub well under the Bash
+ * cap. The stub deliberately lacks what a run needs to proceed — the briefs[]
+ * orientation index and the per-unit fields (compiledLines, paths, titles) —
+ * so an agent that skips Reading the payload cannot silently work from
+ * partial data; it simply doesn't have the inputs.
+ */
+export function emitListResult(name, result) {
+	const { path, lines } = writePayload(
+		name,
+		"json",
+		`${JSON.stringify(result, null, 2)}\n`,
+	);
+	const queue = result.queue ?? [];
+	const warnings = result.warnings ?? [];
+	const gate = confirmationGate(result);
+	const stub = {
+		stub: true,
+		payloadFile: path,
+		payloadLines: lines,
+		...(gate ? { confirmationGate: gate } : {}),
+		note:
+			`STUB ONLY — not the queue. The full ${name} output (the briefs[] orientation index plus complete queue entries) is at payloadFile. ` +
+			`Read that ENTIRE file with the Read tool (all ${lines} lines; continue with offset if one Read does not reach the end) before doing anything else. ` +
+			`Do not grep, sample, head, or tail it, and do not proceed from this stub alone.`,
+		source: result.source ?? "claude-code",
+		briefsRoot: result.briefsRoot,
+		newBriefsDir: result.newBriefsDir,
+		...(result.rawDir !== undefined ? { rawDir: result.rawDir } : {}),
+		...(result.runReportTarget !== undefined
+			? { runReportTarget: result.runReportTarget }
+			: {}),
+		generatedAt: result.generatedAt,
+		briefCount: (result.briefs ?? []).length,
+		queueCount: queue.length,
+		queueIds: queue.slice(0, 20).map((u) => u.id),
+		...(queue.length > 20 ? { queueIdsOmitted: queue.length - 20 } : {}),
+		totalNewTokens: queue.reduce((a, u) => a + (u.newTokens ?? 0), 0),
+		upToDateCount: result.upToDateCount,
+		...(result.ignoredCount !== undefined
+			? { ignoredCount: result.ignoredCount }
+			: {}),
+		...(result.matched !== undefined ? { matched: result.matched } : {}),
+		errors: result.errors ?? [],
+		warningCount: warnings.length,
+		// First few warnings ride in the stub so a seeding warning is visible
+		// immediately; the full list is always in the payload.
+		warnings: warnings.slice(0, 5),
+	};
+	console.log(JSON.stringify(stub, null, 2));
+}
+
+/**
+ * The stdout tail every render script prints instead of the substrate body:
+ * a machine-readable pointer plus an instruction that makes a partial read
+ * detectable (the line count) and a silent skip loud.
+ */
+export function substrateNote(path, lines) {
+	return [
+		`substrate: ${path}`,
+		`substrate-lines: ${lines}`,
+		`NOTE: the rendered substrate is NOT in this output (Bash stdout truncates over ~30KB). ` +
+			`Read the ENTIRE substrate file with the Read tool — all ${lines} lines, continuing with offset if one Read does not reach the end — ` +
+			`or hand it whole to an extraction sub-agent. Never grep, head, or tail it: a partial read silently drops part of this unit.`,
+	].join("\n");
 }
 
 /** Fold pending progress into the committed watermark, then clear it. Returns

@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // List the compile queue for the repo at cwd: every Claude Code session tied to
 // this repo (main checkout + .claude/worktrees), with line counts compared against
-// briefs/.clearvoid/state.json. Pure Node, no deps. JSON on stdout.
+// briefs/.clearvoid/state.json. Pure Node, no deps. Full JSON goes to a payload
+// file; stdout carries a compact stub naming it (see lib.mjs writePayload — Bash
+// stdout truncates over ~30KB, which used to swallow the orientation index).
 //
 // Usage: node listSessions.mjs [--cwd <path>]
 
@@ -11,6 +13,7 @@ import {
 	buildChunks,
 	claudeProjectsDir,
 	cleanContentForTitle,
+	emitListResult,
 	encodeProjectPath,
 	findRepoRoots,
 	loadBriefsIndex,
@@ -18,6 +21,7 @@ import {
 	resolveCollection,
 	nonEmptyLines,
 	parseSessionLines,
+	rawDirForBriefsDir,
 } from "./lib.mjs";
 
 function arg(name, fallback) {
@@ -193,22 +197,28 @@ queue.sort((a, b) =>
 
 const briefsIndex = loadBriefsIndex(briefsRoot);
 
-console.log(
-	JSON.stringify(
-		{
-			repoRoot: matchRoot,
-			checkoutRoot,
-			encodedRoot,
-			briefsRoot,
-			newBriefsDir,
-			generatedAt: new Date(now).toISOString(),
-			briefs: briefsIndex,
-			queue,
-			upToDateCount: upToDate.length,
-			ignoredCount: ignored.length,
-			warnings: summaryBloatWarnings(briefsIndex),
-		},
-		null,
-		2,
+// Per-run report target for this claude-code run (raw/run-<stamp>.report.md).
+// Stamp is LOCAL time in the research-sweep filename shape (YYYY-MM-DDTHHMMSS)
+// so run files sort chronologically as plain strings. The skill only writes the
+// file when the run created/updated at least one brief.
+const t = new Date(now);
+const pad = (n) => String(n).padStart(2, "0");
+const runStamp = `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}T${pad(t.getHours())}${pad(t.getMinutes())}${pad(t.getSeconds())}`;
+
+emitListResult("listSessions", {
+	repoRoot: matchRoot,
+	checkoutRoot,
+	encodedRoot,
+	briefsRoot,
+	newBriefsDir,
+	runReportTarget: join(
+		rawDirForBriefsDir(briefsRoot),
+		`run-${runStamp}.report.md`,
 	),
-);
+	generatedAt: new Date(now).toISOString(),
+	briefs: briefsIndex,
+	queue,
+	upToDateCount: upToDate.length,
+	ignoredCount: ignored.length,
+	warnings: summaryBloatWarnings(briefsIndex),
+});

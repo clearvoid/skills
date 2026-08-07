@@ -7,7 +7,8 @@
 // substrate the skill already wrote — closest in shape to the md source: the unit
 // is a whole file and the watermark is its content hash. A fresh research run
 // overwrites the substrate → new hash → re-queues; an unchanged one is up to date.
-// Pure Node, no deps. JSON on stdout.
+// Pure Node, no deps. Full JSON goes to a payload file; stdout carries a
+// compact stub naming it (lib.mjs writePayload).
 //
 // Usage: node listResearch.mjs <research:key...> [--cwd <p>] [--briefs-dir <p>] [--to <p>]
 //   <research:key>  a `research:<key>` id (or bare <key>); the key is the slug
@@ -19,6 +20,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
+	emitListResult,
 	findRepoRoots,
 	loadBriefsIndex,
 	summaryBloatWarnings,
@@ -134,23 +136,17 @@ if (!existsSync(briefsRoot) && !inRepo && !registered) {
 const briefsIndex = loadBriefsIndex(briefsRoot);
 warnings.push(...summaryBloatWarnings(briefsIndex));
 
-console.log(
-	JSON.stringify(
-		{
-			source: "research",
-			cwd,
-			briefsRoot,
-			newBriefsDir,
-			rawDir,
-			generatedAt: new Date().toISOString(),
-			briefs: briefsIndex,
-			queue,
-			upToDateCount: upToDate.length,
-			matched: keys.length,
-			errors,
-			warnings,
-		},
-		null,
-		2,
-	),
-);
+emitListResult("listResearch", {
+	source: "research",
+	cwd,
+	briefsRoot,
+	newBriefsDir,
+	rawDir,
+	generatedAt: new Date().toISOString(),
+	briefs: briefsIndex,
+	queue,
+	upToDateCount: upToDate.length,
+	matched: keys.length,
+	errors,
+	warnings,
+});

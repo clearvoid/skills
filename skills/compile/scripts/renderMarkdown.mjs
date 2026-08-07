@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 // Render one markdown unit into compile substrate. Near-trivial: a .md file is
-// already clean substrate, so this is mostly a header (provenance + size accounting)
-// in front of the verbatim body. The free-source counterpart to renderSession.mjs.
+// already clean substrate, so this prints a header (provenance + size accounting)
+// plus a `substrate:` pointer at the file itself — the body never rides stdout
+// (Bash truncates over ~30KB; see lib.mjs writePayload). No copy is written:
+// the source file IS the substrate, read in place with the Read tool.
+// The free-source counterpart to renderSession.mjs.
 //
 // Usage: node renderMarkdown.mjs <md:path-or-path> [--briefs-dir <path>] [--raw-dir <path>]
 //   accepts a full `md:<abs-path>` id, a bare path, or a `~/`-prefixed path.
@@ -13,7 +16,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
-import { recordProgress, sha256 } from "./lib.mjs";
+import { recordProgress, sha256, substrateNote } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const target = args.find((a) => !a.startsWith("--"));
@@ -87,4 +90,4 @@ console.log(
 	].join("\n"),
 );
 console.log(`report-target: ${join(rawDir, `${reportKey(path)}.report.md`)}`);
-console.log(`\n${raw.trim()}`);
+console.log(substrateNote(path, raw.split("\n").length));

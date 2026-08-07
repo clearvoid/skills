@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // The `url:` source front-end: enumerate URL units (an article, tweet, or YouTube
 // video — or a whole channel's recent videos) against the briefs watermark. The
-// second free source after `md`. Pure Node, no deps. JSON on stdout.
+// second free source after `md`. Pure Node, no deps. Full JSON goes to a
+// payload file; stdout carries a compact stub naming it (lib.mjs writePayload).
 //
 // Unlike md/claude-code, list does NOT read the unit's content — it can't, the
 // substrate lives behind the hosted extract endpoint. So it only canonicalizes the
@@ -22,12 +23,15 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
 	canonicalizeUrl,
+	conversationSurface,
+	emitListResult,
 	findRepoRoots,
 	loadBriefsIndex,
 	summaryBloatWarnings,
 	loadRoots,
 	resolveCollection,
 	resolveDestination,
+	urlCacheKey,
 	youtubeVideoId,
 	youtubeWatchUrl,
 } from "./lib.mjs";
@@ -198,7 +202,10 @@ for (const url of urls) {
 	// re-compiling a changed page is an explicit re-run, not auto-detected.)
 	const watermark = url;
 	const prevWatermark = state.sources?.[id]?.units ?? null;
-	if (prevWatermark != null) {
+	// Exception: AI-conversation URLs re-queue whenever explicitly named — see
+	// conversationSurface in lib.mjs and sources/browser-capture.md.
+	const surface = conversationSurface(url);
+	if (prevWatermark != null && !surface) {
 		upToDate.push({ id, watermark });
 		continue;
 	}
@@ -208,7 +215,7 @@ for (const url of urls) {
 		url,
 		// title/firstMessage are placeholders until renderUrl fetches the content —
 		// list never hits the network.
-		title: vid ? `YouTube ${vid}` : url,
+		title: vid ? `YouTube ${vid}` : surface ? `${surface} conversation` : url,
 		firstMessage: url,
 		// Substrate size is unknown pre-fetch (content lives behind the extract
 		// endpoint), so newTokens is 0 here. renderUrl reports the real size.
@@ -216,6 +223,16 @@ for (const url of urls) {
 		current: false,
 		watermark,
 		prevWatermark,
+		// `recapture` keys off the raw cache (a capture exists), not the watermark:
+		// a crash between capture and finalizeState leaves a cache with no
+		// watermark, and the agent's re-capture decision cares about the cache.
+		...(surface
+			? {
+					capture: "browser",
+					surface,
+					recapture: existsSync(join(rawDir, urlCacheKey(url))),
+				}
+			: {}),
 	});
 }
 
@@ -237,23 +254,17 @@ if (!existsSync(briefsRoot) && !inRepo && !registered) {
 const briefsIndex = loadBriefsIndex(briefsRoot);
 warnings.push(...summaryBloatWarnings(briefsIndex));
 
-console.log(
-	JSON.stringify(
-		{
-			source: "url",
-			cwd,
-			briefsRoot,
-			newBriefsDir,
-			rawDir,
-			generatedAt: new Date().toISOString(),
-			briefs: briefsIndex,
-			queue,
-			upToDateCount: upToDate.length,
-			matched: urls.length,
-			errors,
-			warnings,
-		},
-		null,
-		2,
-	),
-);
+emitListResult("listUrl", {
+	source: "url",
+	cwd,
+	briefsRoot,
+	newBriefsDir,
+	rawDir,
+	generatedAt: new Date().toISOString(),
+	briefs: briefsIndex,
+	queue,
+	upToDateCount: upToDate.length,
+	matched: urls.length,
+	errors,
+	warnings,
+});

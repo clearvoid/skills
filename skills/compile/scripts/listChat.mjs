@@ -2,7 +2,8 @@
 // The `chat:` source front-end: enumerate brief-primed chat threads (chrome-home's
 // Briefs tab, or any server speaking the same contract) against the briefs
 // watermark. A free source like md/url — the threads are global, you compile them
-// into whatever repo's briefs/ you point at. Pure Node, no deps. JSON on stdout.
+// into whatever repo's briefs/ you point at. Pure Node, no deps. Full JSON goes
+// to a payload file; stdout carries a compact stub naming it (lib.mjs writePayload).
 //
 // Like url, list does NOT fetch thread bodies — it hits GET /chat/briefs-threads
 // once (metadata only) and keys each thread by its messageCount (a monotonic
@@ -23,6 +24,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
+	emitListResult,
 	fetchBriefsThreads,
 	findRepoRoots,
 	loadBriefsIndex,
@@ -141,22 +143,16 @@ if (!existsSync(briefsRoot) && !inRepo && !registered) {
 const briefsIndex = loadBriefsIndex(briefsRoot);
 warnings.push(...summaryBloatWarnings(briefsIndex));
 
-console.log(
-	JSON.stringify(
-		{
-			source: "chat",
-			cwd,
-			briefsRoot,
-			newBriefsDir,
-			generatedAt: new Date().toISOString(),
-			briefs: briefsIndex,
-			queue,
-			upToDateCount: upToDate.length,
-			matched: queue.length + upToDate.length,
-			errors,
-			warnings,
-		},
-		null,
-		2,
-	),
-);
+emitListResult("listChat", {
+	source: "chat",
+	cwd,
+	briefsRoot,
+	newBriefsDir,
+	generatedAt: new Date().toISOString(),
+	briefs: briefsIndex,
+	queue,
+	upToDateCount: upToDate.length,
+	matched: queue.length + upToDate.length,
+	errors,
+	warnings,
+});

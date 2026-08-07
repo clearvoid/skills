@@ -12,18 +12,22 @@ A **free** source that turns any URL into clean markdown via the hosted extract 
 
 `https://` and the `url:` prefix are both accepted on the token.
 
+## AI-conversation URLs — browser capture
+
+Conversation URLs no server can fetch — grok links (`x.com/i/grok/share/<id>`, `x.com/i/grok?conversation=<id>`, `grok.com/c/...`) and native chatgpt.com/`/c/` / claude.ai/`/chat/` conversations — stay in this source (same ids, same raw cache, same report) but swap the fetcher: **the user's browser, with per-use consent**. `listUrl` tags them `capture: "browser"` and re-queues them whenever explicitly named (conversations grow); `renderUrl` prints `status: capture-required` instead of fetching. **Read `sources/browser-capture.md` before the first conversation capture** — consent, availability fail-fast, per-surface turn-attribution recipes, transcript format, and the re-capture loop live there. `chatgpt.com/share/` and `claude.ai/share/` links are NOT conversation-captured — they server-render and flow through the extract endpoint like any URL.
+
 ## The scripts
 
 | Script | Job |
 |---|---|
-| `listUrl.mjs <urlOrChannel...> [--cwd <p>] [--briefs-dir <p>] [--to <p>]` | The queue: canonicalized URLs vs the watermark. JSON. Does NOT fetch content. |
-| `renderUrl.mjs <url:canonical-or-url> [--briefs-dir <p>] [--raw-dir <p>]` | One URL → substrate (header + extracted markdown body); fetches (cache-first) and records its watermark. |
+| `listUrl.mjs <urlOrChannel...> [--cwd <p>] [--briefs-dir <p>] [--to <p>]` | The queue: canonicalized URLs vs the watermark. Stub JSON on stdout naming the full payload file (Read it whole — SKILL.md step 1). Does NOT fetch content. |
+| `renderUrl.mjs <url:canonical-or-url> [--briefs-dir <p>] [--raw-dir <p>]` | One URL → substrate: header + a `substrate:` pointer at the raw cache file (the body never rides stdout — Read the file whole); fetches (cache-first) and records its watermark. |
 
 `listUrl` emits the shared queue shape (`{ source, briefsRoot, newBriefsDir, queue, upToDateCount }`) plus, per entry, `watermark` (the canonical URL) and `prevWatermark`. It also emits `errors` (bad selectors) and `warnings` — surface both to the user. Because the substrate lives behind the extract endpoint, `listUrl` never hits the network: `title`/`firstMessage` are placeholders (the URL or video id) and `newTokens` is `0` until `renderUrl` fetches the real content.
 
 ## Units & watermark
 
-**The unit is a URL; the watermark is the canonical URL itself** — a stable string, stored as `units` in `state.json` under the id `url:<canonical-url>`. A published article or a video transcript doesn't change, so a once-compiled URL never re-queues automatically (re-compiling a drifted page is an explicit re-run, not auto-detected). YouTube watch URLs canonicalize to `https://www.youtube.com/watch?v=<id>`; other URLs get light normalization (lowercased host, no fragment, tracking params like `utm_*`/`fbclid` dropped).
+**The unit is a URL; the watermark is the canonical URL itself** — a stable string, stored as `units` in `state.json` under the id `url:<canonical-url>`. A published article or a video transcript doesn't change, so a once-compiled URL never re-queues automatically (re-compiling a drifted page is an explicit re-run, not auto-detected). YouTube watch URLs canonicalize to `https://www.youtube.com/watch?v=<id>`; other URLs get light normalization (lowercased host, no fragment, tracking params like `utm_*`/`fbclid` dropped). **Exception:** an AI-conversation URL (browser capture) re-queues every time it is explicitly named — its capture position lives in the raw file's `turns:`/`captured_at:` frontmatter, not the watermark, and the capture flow skips an unchanged conversation (see `sources/browser-capture.md`).
 
 ## Destination
 
@@ -37,13 +41,13 @@ Fetched substrate is cached at `<repoRoot>/raw/<key>` (`<key>` is `youtube-<vide
 
 Beyond folding a url into cross-source briefs, compile writes a **per-source report** — five sections, `## Summary` and `## Briefs updated` always present, the rest best-effort: `## Summary` (what THIS one source says, start to finish, the reading view the desktop Links tab shows beside the citing briefs), `## Briefs updated` (which briefs this source contributed to in the run and what it added, as `[[slug]]` pointers, not a restatement), `## Takeaways` (the interpretive residue a neutral summary wouldn't contain — what a reader actually learned, never the thesis restated), `## Pushbacks` (specific skeptical reads — where the source is thin, marketing, or dodges, each grounded in an actual claim; written fewer or omitted, never padded with generic filler) and `## Next steps` (the grounded research threads and to-dos this source raised, as GFM task items — the backlog, kept under its source instead of in a central file so each item keeps its provenance; omitted when nothing grounded). It's complementary to briefs: a brief is cross-source synthesis (and dilutes a single long source), the report's `## Summary` is fidelity to the source in order and its `## Briefs updated` is the source-eye view of where it landed. It lives in a **sibling** of the verbatim cache, `raw/<key>.report.md` (so the verbatim `raw/<key>.md` stays a pure, byte-faithful, offline cache — the report, being LLM output, never lands in it). `renderUrl` prints the target as a `report-target: <abs path>` line; the agent writes the report there with its Write tool (SKILL.md step 6, url-only). The file carries frontmatter `report_of: <canonical-url>`, `title:`, `generated:` above the markdown body. The `## Summary` section is scaled to the source's length (the `transcript runs to <stamp>` runtime / token size is the proportionality signal), sectioned, with `[MM:SS]` anchors for video. Its sub-sections are `###` (h3) headings nested under `## Summary`, never `##` — the only `##` headings in a report are the five top-level sections, so the reading-view nav stays a clean section list rather than a flat wall of timestamp headings.
 
-**Frozen at first compile.** Because the url watermark (the canonical URL) holds, a compiled url never auto-re-queues, so the report is written once and not regenerated on later runs. Improving it is an explicit re-run (drop the watermark + delete the files); a url compiled before this feature shipped keeps its `raw/<key>.md` but has no report (it degrades to no reading view, never an error). Deleting `raw/<key>.report.md` alone does not trigger regeneration — the watermark, not the file's presence, gates the queue.
+**Frozen at first compile.** Because the url watermark (the canonical URL) holds, a compiled url never auto-re-queues, so the report is written once and not regenerated on later runs. Improving it is an explicit re-run (drop the watermark + delete the files); a url compiled before this feature shipped keeps its `raw/<key>.md` but has no report (it degrades to no reading view, never an error). Deleting `raw/<key>.report.md` alone does not trigger regeneration — the watermark, not the file's presence, gates the queue. **Exception:** a browser-captured conversation's report is **re-writable** (like a chat report) — a re-capture that found new turns rewrites both the substrate and the report.
 
 ## Env vars
 
 `renderUrl` calls the hosted extract endpoint:
 
-- `CLEARVOID_EXTRACT_URL` — the endpoint (default `https://kolnqincbwtmxtbswaet.supabase.co/functions/v1/extract`).
+- `CLEARVOID_EXTRACT_URL` — the endpoint (default `https://api.clearvoid.ai/functions/v1/extract`).
 - `CLEARVOID_EXTRACT_TOKEN` — optional Bearer token. The public endpoint is open (the monthly cap + per-IP rate limit are the guardrails), so this is only needed against a deployment configured closed; when set it is sent as `Authorization: Bearer <token>`.
 
 The endpoint returns `200 { status:"completed", title, markdown, source_type, author_name, author_username, published_at, channel_name, channel_id, og_image_url }` on success; a `202 { status:"pending", contentId }` means the extraction is still running — `renderUrl` re-polls by `contentId` every few seconds up to ~3 min until it completes (a `422`/4xx/5xx surfaces as a clear error). `listUrl` never touches the endpoint.

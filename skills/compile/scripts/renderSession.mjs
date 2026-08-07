@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 // Render one Claude Code session JSONL into clean compile substrate: chrome-stripped
-// USER:/ASSISTANT: turns, chunked at /compact boundaries. Markdown on stdout.
+// USER:/ASSISTANT: turns, chunked at /compact boundaries. The substrate goes to a
+// payload file; stdout carries the header plus a `substrate:` pointer (Bash stdout
+// truncates over ~30KB — see lib.mjs writePayload; runs used to `| tail` around it
+// and silently drop the start of the session).
 //
 // Usage: node renderSession.mjs <session-id-or-path> [--from-line N] [--briefs-dir <path>]
 //   <session-id-or-path>  bare id (encoded-dir/uuid), claude-code:<id>, or absolute .jsonl path
@@ -16,6 +19,9 @@ import {
 	nonEmptyLines,
 	parseSessionLines,
 	recordProgress,
+	slugify,
+	substrateNote,
+	writePayload,
 } from "./lib.mjs";
 
 const args = process.argv.slice(2);
@@ -68,12 +74,23 @@ const header = [
 
 console.log(header);
 if (chunks.length === 0) {
+	// Nothing to read — the watermark above is still recorded, so the unit
+	// won't re-queue. No substrate file is written.
 	console.log("\n(no substrate content in this range)");
 	process.exit(0);
 }
-for (const c of chunks) {
-	console.log(
-		`\n===== chunk ${c.chunkIndex + 1}/${chunks.length} · ~${c.approxTokens} tokens · ${c.messageCount} turns${c.startsWithCompactSummary ? " · opens with prior-session summary" : ""} =====\n`,
-	);
-	console.log(c.text);
-}
+const totalTokens = chunks.reduce((a, c) => a + c.approxTokens, 0);
+const substrate = [
+	header,
+	...chunks.map(
+		(c) =>
+			`\n===== chunk ${c.chunkIndex + 1}/${chunks.length} · ~${c.approxTokens} tokens · ${c.messageCount} turns${c.startsWithCompactSummary ? " · opens with prior-session summary" : ""} =====\n\n${c.text}`,
+	),
+].join("\n");
+const { path: substratePath, lines: substrateLines } = writePayload(
+	`session-${slugify(bare, 60)}`,
+	"md",
+	`${substrate}\n`,
+);
+console.log(`~${totalTokens} tokens · ${chunks.length} chunk(s)`);
+console.log(substrateNote(substratePath, substrateLines));

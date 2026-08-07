@@ -18,10 +18,21 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { recordProgress, youtubeVideoId } from "./lib.mjs";
+import {
+	conversationSurface,
+	recordProgress,
+	substrateNote,
+	urlCacheKey,
+} from "./lib.mjs";
 
-const DEFAULT_EXTRACT_URL =
-	"https://kolnqincbwtmxtbswaet.supabase.co/functions/v1/extract";
+// FRAGILE: use the clearvoid.ai domain, never the raw Supabase project URL.
+// This default ships inside an installed plugin on other people's machines, so
+// it can never be changed retroactively — the domain is the only layer that
+// lets the backend move (project migration, rotation) without breaking every
+// install. Both front the same function; the raw URL was hardcoded here by
+// mistake in v0.6.0 while api.clearvoid.ai had already been the convention
+// since 2026-03.
+const DEFAULT_EXTRACT_URL = "https://api.clearvoid.ai/functions/v1/extract";
 const POLL_INTERVAL_MS = 3000;
 const POLL_MAX_MS = 180_000; // ~3 min ceiling for the 202 → completed path
 
@@ -43,22 +54,9 @@ const rawDir = resolve(arg("--raw-dir", join(process.cwd(), "raw")));
 
 const canonical = target.replace(/^url:/, "");
 
-// Cache key: a YouTube watch URL keys on its video id (via the shared, stricter
-// youtubeVideoId in lib.mjs — same key listUrl watermarks under); any other URL on
-// a filesystem-safe slug of the canonical URL. Stable across runs.
-function cacheKey(u) {
-	const vid = youtubeVideoId(u);
-	if (vid) return `youtube-${vid}.md`;
-	const slug = u
-		.replace(/^https?:\/\//, "")
-		.replace(/[^a-zA-Z0-9._-]+/g, "-")
-		.replace(/-+/g, "-")
-		.replace(/^-|-$/g, "")
-		.slice(0, 180);
-	return `${slug || "url"}.md`;
-}
-
-const key = cacheKey(canonical);
+// Cache key derivation is shared with listUrl via lib.mjs (urlCacheKey) so the
+// watermark key and the raw cache key never diverge.
+const key = urlCacheKey(canonical);
 const cachePath = join(rawDir, key);
 // Per-source report lives in a sibling of the verbatim cache:
 // raw/<key>.report.md. The agent writes it (it's LLM output); this script only
@@ -150,6 +148,46 @@ function frontmatter(meta) {
 // `fromCache` captured BEFORE any write — after a cache miss we write the file, so
 // existsSync(cachePath) would be true at the end and wrongly read as "cached".
 const fromCache = existsSync(cachePath);
+const surface = conversationSurface(canonical);
+
+// AI-conversation URL with no capture yet: this script cannot fetch it — the
+// content only renders in a real browser (login/bot wall; grok shares are bare
+// SPA shells). Emit the capture contract for the agent and stop WITHOUT recording
+// a watermark, so the unit stays queued until the capture lands. The agent
+// captures per sources/browser-capture.md (per-use consent), Writes the
+// transcript to capture-target with the frontmatter below, then re-runs this
+// exact command — which then takes the normal cache-hit path.
+if (!fromCache && surface) {
+	console.log(
+		[
+			`# url ${canonical}`,
+			"status: capture-required",
+			`surface: ${surface}`,
+			`capture-target: ${cachePath}`,
+			`report-target: ${reportPath}`,
+			"",
+			"This is an AI-conversation URL: capture it from the user's browser",
+			"(read sources/browser-capture.md first — consent, recipes, transcript",
+			"format), write the transcript to capture-target opening with exactly",
+			"this frontmatter, then re-run this command:",
+			"",
+			// NOTE: this template, the cache-hit echo parser below (turns/captured_at),
+			// and sources/browser-capture.md step 4 are sync-coupled — change one,
+			// change all three.
+			"---",
+			"source: url",
+			"source_type: ai_thread",
+			`surface: ${surface}`,
+			`url: ${canonical}`,
+			"title: <conversation title>",
+			"captured_at: <ISO-8601 of the capture>",
+			"turns: <total message count, user + assistant>",
+			"---",
+		].join("\n"),
+	);
+	process.exit(0);
+}
+
 let rawText;
 // `meta` is only populated on a fresh fetch — its sole use is the cosmetic render
 // header below. On a cache hit we don't re-parse the frontmatter we wrote; the body
@@ -218,8 +256,18 @@ const size = [
 	.filter(Boolean)
 	.join(" · ");
 if (fromCache) {
-	// Cache hit — no metadata reconstruction, just the marker + size.
-	console.log([`# url ${canonical}`, `${size} · cached`].join("\n"));
+	// Cache hit — no metadata reconstruction, just the marker + size. A browser
+	// capture additionally echoes its capture position (turns / captured_at from
+	// the frontmatter the capture wrote) so the agent can judge staleness.
+	const parts = [`${size} · cached`];
+	if (surface) {
+		const fm = rawText.match(/^---\n([\s\S]*?)\n---/);
+		const turns = fm?.[1].match(/^turns:\s*(\d+)/m);
+		const capturedAt = fm?.[1].match(/^captured_at:\s*(\S+)/m);
+		if (turns) parts.push(`turns: ${turns[1]}`);
+		if (capturedAt) parts.push(`captured ${capturedAt[1]}`);
+	}
+	console.log([`# url ${canonical}`, parts.join(" · ")].join("\n"));
 } else {
 	const sourceType = meta.source_type ?? "url";
 	const author = meta.author_name ?? meta.author_username;
@@ -241,4 +289,7 @@ if (fromCache) {
 // (SKILL.md step 6, url sources only). Naming it here keeps the cache-key logic
 // in one place; the agent Writes the report to this path.
 console.log(`report-target: ${reportPath}`);
-console.log(`\n${body}`);
+// The substrate is the raw cache file itself (verbatim, incl. its provenance
+// frontmatter) — never dumped to stdout (Bash truncates over ~30KB; see
+// lib.mjs writePayload). The agent Reads it in place.
+console.log(substrateNote(cachePath, rawText.split("\n").length));

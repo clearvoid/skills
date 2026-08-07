@@ -2,7 +2,8 @@
 // The `md:` source front-end: enumerate plain-markdown units (a file, a directory,
 // or a glob) against the briefs watermark. The free-source counterpart to
 // listSessions.mjs — same queue shape, but the unit is a whole file and the
-// watermark is a content hash, not a line offset. Pure Node, no deps. JSON on stdout.
+// watermark is a content hash, not a line offset. Pure Node, no deps. Full JSON
+// goes to a payload file; stdout carries a compact stub naming it (lib.mjs writePayload).
 //
 // Usage: node listMarkdown.mjs <selector...> [--cwd <path>] [--briefs-dir <path>]
 //   <selector>     md:<path>, a bare path, a directory (recursive *.md), or a *-glob.
@@ -14,6 +15,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import {
+	emitListResult,
 	findRepoRoots,
 	loadBriefsIndex,
 	summaryBloatWarnings,
@@ -171,22 +173,16 @@ if (!existsSync(briefsRoot) && !inRepo && !registered) {
 const briefsIndex = loadBriefsIndex(briefsRoot);
 warnings.push(...summaryBloatWarnings(briefsIndex));
 
-console.log(
-	JSON.stringify(
-		{
-			source: "md",
-			cwd,
-			briefsRoot,
-			newBriefsDir,
-			generatedAt: new Date().toISOString(),
-			briefs: briefsIndex,
-			queue,
-			upToDateCount: upToDate.length,
-			matched: files.length,
-			errors,
-			warnings,
-		},
-		null,
-		2,
-	),
-);
+emitListResult("listMarkdown", {
+	source: "md",
+	cwd,
+	briefsRoot,
+	newBriefsDir,
+	generatedAt: new Date().toISOString(),
+	briefs: briefsIndex,
+	queue,
+	upToDateCount: upToDate.length,
+	matched: files.length,
+	errors,
+	warnings,
+});

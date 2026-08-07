@@ -16,10 +16,12 @@ All pure Node, no dependencies, run with `node`:
 
 | Script | Job |
 |---|---|
-| `listSessions.mjs [--cwd <path>]` | The queue: repo sessions vs the state watermark. JSON. |
-| `renderSession.mjs <id> [--from-line N] [--briefs-dir <p>]` | One session → clean markdown substrate; `--briefs-dir` records its watermark. |
+| `listSessions.mjs [--cwd <path>]` | The queue: repo sessions vs the state watermark. Stub JSON on stdout naming the full payload file (Read it whole — SKILL.md step 1). The payload also carries `runReportTarget` — the `raw/run-<stamp>.report.md` path for this run's per-run report. |
+| `renderSession.mjs <id> [--from-line N] [--briefs-dir <p>]` | One session → clean markdown substrate written to a `substrate:` file (stdout carries only the header + pointer); `--briefs-dir` records its watermark. |
 
 Session ids are source-namespaced: `claude-code:<encoded-dir>/<uuid>`. Use the full id everywhere (state, frontmatter `sources:` lists).
+
+**Sessions get no per-source report** (the JSONL substrate is local and browsable, unlike a chat thread), but a run that created or updated at least one brief writes a **per-run report** to `runReportTarget` covering the whole batch — the review artifact for a multi-brief compile. Contract in SKILL.md step 9 / FORMAT.md.
 
 **Units are non-empty JSONL lines.** The watermark stores the absolute line count compiled through; `renderSession --from-line` resumes there. Sessions grow — a session can appear in the queue again with only its tail to read.
 
@@ -27,7 +29,7 @@ Session ids are source-namespaced: `claude-code:<encoded-dir>/<uuid>`. Use the f
 
 ## What the renderer gives you
 
-`renderSession.mjs` outputs a header (title, branch, time span, line range) then chunks:
+`renderSession.mjs` prints a header (title, branch, time span, line range) and writes the chunked substrate to the `substrate:` file it names — Read that file whole (or delegate it), never `tail` it:
 
 - Only real user/assistant text turns survive: thinking, tool calls/results, harness chrome (`<system-reminder>`, IDE injections, bash output, slash-command ceremony) are stripped. Slash-command turns are unwrapped to their `<command-args>` payload.
 - Chunks split at `/compact` boundaries; a chunk opening with `PRIOR-SESSION-SUMMARY:` is the recap Claude Code injected when the session continued past compaction — treat it as context for the turns after it, not as new primary material.

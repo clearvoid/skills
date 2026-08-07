@@ -23,8 +23,10 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { findRepoRoots, researchKey } from "../../compile/scripts/lib.mjs";
 
-const DEFAULT_RESEARCH_URL =
-	"https://kolnqincbwtmxtbswaet.supabase.co/functions/v1/research";
+// FRAGILE: the clearvoid.ai domain, never the raw Supabase project URL — see
+// the note on DEFAULT_EXTRACT_URL in ../../compile/scripts/renderUrl.mjs. A
+// default that ships in an installed plugin can never be changed retroactively.
+const DEFAULT_RESEARCH_URL = "https://api.clearvoid.ai/functions/v1/research";
 
 function arg(name, fallback) {
 	const i = process.argv.indexOf(name);

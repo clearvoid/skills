@@ -14,7 +14,7 @@
 
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { recordProgress, sha256 } from "./lib.mjs";
+import { recordProgress, sha256, substrateNote } from "./lib.mjs";
 
 function arg(name, fallback) {
 	const i = process.argv.indexOf(name);
@@ -63,4 +63,6 @@ console.log([`# research ${key}`, size].join("\n"));
 // step 6). Naming it here keeps the key derivation in one place; the agent Writes
 // the report to this path. The verbatim raw/<key>.research.md is never edited.
 console.log(`report-target: ${reportPath}`);
-console.log(`\n${body}`);
+// The substrate is the cached research file itself — never dumped to stdout
+// (Bash truncates over ~30KB; see lib.mjs writePayload). Read it in place.
+console.log(substrateNote(substratePath, rawText.split("\n").length));
