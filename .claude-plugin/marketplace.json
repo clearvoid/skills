@@ -7,7 +7,7 @@
 			"name": "clearvoid",
 			"source": "./",
 			"description": "Compile your sessions, notes, and links into living markdown briefs — in your repo, in files you own.",
-			"version": "0.13.1",
+			"version": "0.13.2",
 			"category": "productivity"
 		}
 	]
